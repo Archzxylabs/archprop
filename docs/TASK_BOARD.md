@@ -25,7 +25,7 @@ HTTP schemas, runtime variable names, and file ownership are frozen.
 | ID | Owner | Owned files | Dependencies | Acceptance / merge gate | Status | Latest commit | Tests | Blockers |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | ORCH-001 | Orchestrator | docs, shared types, root config | none | frozen contracts/API/types; four clean worktrees | Complete | `integration` | spec/diff/worktree audit | native `.git` is read-only; `/tmp/archprop-git-control` is the control repo |
-| SC-001 | Claude #1 | `packages/contracts/**` | ORCH-001 | six contracts; locked ABI/events/invariants; Foundry suite green | Ready | — | required: `forge test -vvv` | awaiting human dispatch |
+| SC-001 | Claude #1 | `packages/contracts/**` | ORCH-001 | six contracts; locked ABI/events/invariants; Foundry suite green | Blocked | — (uncommitted working tree) | `forge test -vvv`: 79 passed from existing cache; `forge fmt --check`: failed | no reviewable commit; ABI/lifecycle drift; dependencies are untracked and not reproducibly installed |
 | FE-001 | Claude #2 | frontend-owned paths | ORCH-001 | all required routes and state-truthful responsive shell; no fake chain success | Ready | — | required: web typecheck/lint/build | awaiting human dispatch |
 | BE-001 | Claude #3 | API/server/supabase paths | ORCH-001 | migration/RLS/storage policies; validated property/upload/revenue APIs | Ready | — | required: focused tests + web typecheck | awaiting human dispatch |
 | IQ-001 | Claude #4 | chain/scripts/e2e/deployment ledger | ORCH-001 | frozen typed ABI/client, fail-closed config, non-deploy scripts, E2E scaffold | Ready | — | required: chain tests/typecheck | awaiting human dispatch |
