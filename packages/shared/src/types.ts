@@ -23,6 +23,12 @@ export type DocumentType =
   | "BUILDING_PERMIT"
   | "ECONOMIC_RIGHTS_AGREEMENT";
 
+export type PresentationStatus =
+  | LifecycleStatus
+  | "DRAFT"
+  | "COMING_SOON"
+  | "VERIFICATION_PENDING";
+
 export interface PropertyMetadata {
   assetId: AssetId;
   name: string;
@@ -50,6 +56,20 @@ export interface ChainTransaction {
   txHash: TxHash;
   eventName: string;
   blockNumber?: bigint;
+}
+
+export interface CreatePropertyRequest {
+  externalId: string;
+  name: string;
+  location: string;
+  propertyType: string;
+  issuerName: string;
+  indicativeValue: string;
+  offeringTarget: string;
+  tokenSupply: string;
+  tokenPrice: string;
+  economicRightsBps: number;
+  description: string;
 }
 
 export const VILLA_NUSA = {

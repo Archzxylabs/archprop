@@ -1,15 +1,41 @@
 # ARCHPROP Task Board
 
-Baseline: `integration` branch (commit recorded below once created). Status is
-updated only by the orchestrator after evidence is checked.
+The orchestrator alone updates status after inspecting the actual branch,
+commit, scope, interfaces, and test evidence. `Ready` does not mean dispatched;
+the human dispatcher confirms when work starts.
 
-| ID | Owner | Owned files | Dependencies | Acceptance criteria | Status | Latest commit | Tests | Blockers |
+## Dependency graph
+
+```text
+ORCH-001 frozen baseline
+ ├── SC-001 contract protocol + Foundry tests
+ │    └── IQ-002 ABI reconciliation + local golden-path integration
+ ├── FE-001 route/component shell
+ │    └── FE-002 live wallet/chain integration ─┐
+ ├── BE-001 schema/evidence APIs                 ├── INT-001 full integration
+ │    └── BE-002 signed evidence/revenue polish ─┤
+ └── IQ-001 typed adapters/scripts/E2E scaffold ┘
+                                                  └── DEP-001 Arbitrum Sepolia
+                                                      (human authorization)
+```
+
+SC-001, FE-001, BE-001, and IQ-001 are safe to run concurrently because the ABI,
+HTTP schemas, runtime variable names, and file ownership are frozen.
+
+| ID | Owner | Owned files | Dependencies | Acceptance / merge gate | Status | Latest commit | Tests | Blockers |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| ORCH-001 | Orchestrator | docs + controls | none | frozen baseline and four worktrees | Complete | `1219eab` | spec audit; worktree check | native `.git` read-only; external control repo used |
-| SC-001 | Agent 1 | `packages/contracts/**` | INTERFACES locked | six contracts compile; invariants/events/Foundry tests pass | Blocked | — | not run | Claude API connection denied by environment (`EPERM`) |
-| FE-001 | Agent 2 | UI paths/components/styles | interfaces + chain adapter ABI | required routes, demo labels, wallet transaction UX, responsive Villa Nusa flow | Blocked | — | not run | Claude API connection denied by environment (`EPERM`) |
-| BE-001 | Agent 3 | API/server/supabase | HTTP schema | migrations, validated CRUD/upload SHA-256/private storage, no chain authority bypass | Blocked | — | not run | Claude API connection denied by environment (`EPERM`) |
-| IQ-001 | Agent 4 | chain/scripts/e2e/deployments | interfaces + contract artifact after SC-001 | typed adapters, no-deploy seed diagnostics, E2E scaffold | Blocked | — | not run | Claude API connection denied by environment (`EPERM`) |
+| ORCH-001 | Orchestrator | docs, shared types, root config | none | frozen contracts/API/types; four clean worktrees | Complete | `integration` | spec/diff/worktree audit | native `.git` is read-only; `/tmp/archprop-git-control` is the control repo |
+| SC-001 | Claude #1 | `packages/contracts/**` | ORCH-001 | six contracts; locked ABI/events/invariants; Foundry suite green | Ready | — | required: `forge test -vvv` | awaiting human dispatch |
+| FE-001 | Claude #2 | frontend-owned paths | ORCH-001 | all required routes and state-truthful responsive shell; no fake chain success | Ready | — | required: web typecheck/lint/build | awaiting human dispatch |
+| BE-001 | Claude #3 | API/server/supabase paths | ORCH-001 | migration/RLS/storage policies; validated property/upload/revenue APIs | Ready | — | required: focused tests + web typecheck | awaiting human dispatch |
+| IQ-001 | Claude #4 | chain/scripts/e2e/deployment ledger | ORCH-001 | frozen typed ABI/client, fail-closed config, non-deploy scripts, E2E scaffold | Ready | — | required: chain tests/typecheck | awaiting human dispatch |
+| SC-002 | Claude #1 | `packages/contracts/**` | SC-001 review | isolated fixes, gas/security review, deployment artifact handoff | Backlog | — | Foundry invariant/fuzz suite | SC-001 not reviewed |
+| FE-002 | Claude #2 | frontend-owned paths | FE-001 + IQ-001 merged | live wagmi/viem reads/writes, receipts, explorer links, no mock economics | Backlog | — | component + typecheck/lint/build | dependencies not merged |
+| BE-002 | Claude #3 | backend-owned paths | BE-001 review | signed private evidence access and integration fixes | Backlog | — | focused API/security tests | BE-001 not reviewed |
+| IQ-002 | Claude #4 | integration-owned paths | SC-001 + IQ-001 merged | reconcile generated ABI; local Anvil deploy/seed/E2E golden path | Backlog | — | local deployment + E2E | contracts not merged |
+| INT-001 | Orchestrator | integration only | approved initial/follow-up tasks | sequential merges; full checks; no ownership drift | Backlog | — | forge + pnpm checks + local E2E | implementation pending |
+| DEP-001 | Claude #4, orchestrator reviewed | deployment files only | INT-001 + explicit human authorization | Arbitrum Sepolia deployment, address/tx ledger, smoke test | Blocked | — | on-chain receipts | explicit authorization not granted |
 
-Merge order: SC-001 → IQ-001 (adapter alignment) → BE-001 → FE-001 → full
-integration. Agents report `Review`; only then may a card move to `Merged`.
+Initial merge order is SC-001, IQ-001, BE-001, FE-001, with a relevant test run
+after every merge. An agent report moves a task to `Review`, never directly to
+`Merged`.

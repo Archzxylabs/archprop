@@ -7,9 +7,11 @@
     "typecheck": "pnpm -r --if-present typecheck",
     "lint": "pnpm -r --if-present lint",
     "build": "pnpm --filter @archprop/web build",
-    "test": "pnpm -r --if-present test"
+    "test": "pnpm -r --if-present test",
+    "e2e": "pnpm --filter @archprop/e2e test"
   },
   "devDependencies": {
+    "tsx": "4.20.6",
     "typescript": "5.9.3"
   }
 }
