@@ -53,7 +53,7 @@ export interface ChainTransaction {
 }
 
 export const VILLA_NUSA = {
-  id: "0x2efb72e15d2f5cc06f3046b5c72037ec06e8763059bf5528237ff1f792632d6d" as AssetId,
+  id: "0x1756428cf9ce005285ddcf87c75240c798535bed95c6aeca6a5a7d3eb7b364ae" as AssetId,
   externalId: "ARCHPROP-001",
   name: "Villa Nusa",
   location: "Bali",
