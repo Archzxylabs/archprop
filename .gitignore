@@ -1,0 +1,17 @@
+node_modules/
+.next/
+out/
+coverage/
+coverage.lcov
+cache/
+dist/
+artifacts/
+broadcast/
+lib/
+env/
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.secret

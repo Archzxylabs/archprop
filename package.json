@@ -1,0 +1,15 @@
+{
+  "name": "archprop",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@12.9.1",
+  "scripts": {
+    "typecheck": "pnpm -r --if-present typecheck",
+    "lint": "pnpm -r --if-present lint",
+    "build": "pnpm --filter @archprop/web build",
+    "test": "pnpm -r --if-present test"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3"
+  }
+}
