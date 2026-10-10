@@ -12,6 +12,7 @@ import {IdentityRegistry} from "../src/IdentityRegistry.sol";
 import {OfferingEscrow} from "../src/OfferingEscrow.sol";
 import {PropertyToken} from "../src/PropertyToken.sol";
 import {BaseTest} from "./Base.t.sol";
+import {MockFeeToken} from "./MockFeeToken.sol";
 
 /**
  * @title OfferingEscrowTest
@@ -350,6 +351,37 @@ contract OfferingEscrowTest is BaseTest {
         assertEq(escrow.paymentOf(offeringId, investor1), amount);
 
         assertEq(_offering(offeringId).raised, amount);
+    }
+
+    function test_invest_rejectsFeeOnTransferToken() public {
+        MockFeeToken feeToken = new MockFeeToken("Fee", "FEE", 500, outsider, false);
+        vm.prank(structurer);
+        uint256 id = escrow.createOffering(
+            assetId,
+            address(token),
+            address(feeToken),
+            TARGET,
+            TOKEN_PRICE,
+            uint64(block.timestamp + 7 days),
+            treasury
+        );
+
+        uint256 amount = 10 * TOKEN_PRICE;
+        feeToken.mint(investor1, amount);
+
+        vm.startPrank(investor1);
+        feeToken.approve(address(escrow), amount);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                OfferingEscrow.AmountMismatch.selector, amount, amount - (amount * 500 / 10_000)
+            )
+        );
+        escrow.invest(id, amount);
+        vm.stopPrank();
+
+        assertEq(escrow.paymentOf(id, investor1), 0);
+        assertEq(escrow.allocationOf(id, investor1), 0);
+        assertEq(feeToken.balanceOf(address(escrow)), 0);
     }
 
     // -----------------------------------------------------------------

@@ -101,6 +101,7 @@ contract OfferingEscrow is AccessControl, ReentrancyGuard, IOfferingEscrow {
     error ZeroInvestment();
     error NotWholeTokenAmount(uint256 paymentAmount, uint256 tokenPrice);
     error OfferingFull(uint256 remaining);
+    error AmountMismatch(uint256 expected, uint256 received);
     error InvalidOfferingStatus(OfferingStatus current);
     error DeadlineNotPassed();
     error DeadlinePassed();
@@ -219,12 +220,17 @@ contract OfferingEscrow is AccessControl, ReentrancyGuard, IOfferingEscrow {
         uint256 remaining = o.target - o.raised;
         if (paymentAmount > remaining) revert OfferingFull(remaining);
 
+        // Pull payment and verify exact deposit before crediting accounting state.
+        uint256 balanceBefore = IERC20(o.paymentToken).balanceOf(address(this));
+        IERC20(o.paymentToken).safeTransferFrom(msg.sender, address(this), paymentAmount);
+        uint256 received = IERC20(o.paymentToken).balanceOf(address(this)) - balanceBefore;
+        if (received != paymentAmount) revert AmountMismatch(paymentAmount, received);
+
         uint256 allocation = paymentAmount / o.tokenPrice;
         _payment[offeringId][msg.sender] += paymentAmount;
         _allocation[offeringId][msg.sender] += allocation;
         o.raised += paymentAmount;
 
-        IERC20(o.paymentToken).safeTransferFrom(msg.sender, address(this), paymentAmount);
         emit InvestmentMade(offeringId, msg.sender, paymentAmount, allocation);
     }
 
