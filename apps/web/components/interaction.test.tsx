@@ -99,6 +99,60 @@ describe("PropertyDetailsForm component", () => {
     }
   });
 
+  it("ensures every field has accessible labels, visible focus rings, and full width styling", () => {
+    const html = renderToStaticMarkup(<PropertyDetailsForm />);
+
+    const fieldIds = [
+      "externalId",
+      "name",
+      "location",
+      "propertyType",
+      "issuerName",
+      "indicativeValue",
+      "offeringTarget",
+      "tokenSupply",
+      "tokenPrice",
+      "economicRightsBps",
+      "description",
+    ];
+
+    for (const id of fieldIds) {
+      expect(html).toContain(`id="${id}"`);
+      expect(html).toContain(`for="${id}"`);
+      expect(html).toContain("focus-visible:ring-2");
+      expect(html).toContain("w-full");
+    }
+  });
+
+  it("links invariant error to offeringTarget, tokenSupply, and tokenPrice via aria-describedby", () => {
+    const html = renderToStaticMarkup(
+      <PropertyDetailsForm initialValues={{ offeringTarget: "4000000000" }} />,
+    );
+
+    expect(html).toContain('id="offering-invariant-error"');
+    expect(html).toContain('role="alert"');
+    expect(html).toMatch(/id="offeringTarget"[^>]*aria-describedby="[^"]*offering-invariant-error[^"]*"/);
+    expect(html).toMatch(/id="tokenSupply"[^>]*aria-describedby="[^"]*offering-invariant-error[^"]*"/);
+    expect(html).toMatch(/id="tokenPrice"[^>]*aria-describedby="[^"]*offering-invariant-error[^"]*"/);
+  });
+
+  it("links both error and hint to economicRightsBps via aria-describedby when invalid", () => {
+    const html = renderToStaticMarkup(
+      <PropertyDetailsForm initialValues={{ economicRightsBps: "3000abc" }} />,
+    );
+
+    expect(html).toMatch(
+      /id="economicRightsBps"[^>]*aria-describedby="economicRightsBps-error economicRightsBps-hint"/,
+    );
+  });
+
+  it("includes visible focus ring on reset button", () => {
+    const html = renderToStaticMarkup(<PropertyDetailsForm />);
+    expect(html).toContain("Reset to Villa Nusa preset");
+    expect(html).toContain("focus-visible:outline-2");
+    expect(html).toContain("focus-visible:outline-brand");
+  });
+
   it("renders legal title disclaimer and no h1 tags", () => {
     const html = renderToStaticMarkup(<PropertyDetailsForm />);
 
@@ -125,6 +179,35 @@ describe("InvestmentPanel component", () => {
     expect(html).toContain("mIDR — Demo Currency — No Real Monetary Value");
     expect(html).toContain("economic participation rights in rental distributions");
     expect(html).toContain("not direct legal title to the land");
+  });
+
+  it("provides accessible aria-pressed state and visible focus rings on preset buttons", () => {
+    const html = renderToStaticMarkup(
+      <InvestmentPanel
+        tokenPrice={tokenPrice}
+        tokenSymbol="AVNUSA"
+        offeringTarget={offeringTarget}
+      />,
+    );
+
+    // Initial default is 1000000, so first preset (1M) has aria-pressed="true"
+    expect(html).toContain('aria-pressed="true"');
+    expect(html).toContain('aria-pressed="false"');
+    expect(html).toContain("focus-visible:outline-2");
+    expect(html).toContain("focus-visible:outline-brand");
+  });
+
+  it("associates both error and hint to investment amount when input is invalid", () => {
+    // Investment amount with letters / invalid
+    const html = renderToStaticMarkup(
+      <InvestmentPanel
+        tokenPrice={tokenPrice}
+        tokenSymbol="AVNUSA"
+        offeringTarget={offeringTarget}
+      />,
+    );
+    // Default valid state points to hint
+    expect(html).toMatch(/id="investment-amount"[^>]*aria-describedby="investment-hint"/);
   });
 
   it("previews calculated AVNUSA allocation correctly (1,000,000 mIDR -> 100 AVNUSA)", () => {

@@ -61,7 +61,7 @@ export function InvestmentPanel({
 
   return (
     <div
-      className={`rounded-card border border-line bg-surface p-5 shadow-panel ${className}`}
+      className={`rounded-card border border-line bg-surface p-4 sm:p-5 shadow-panel min-w-0 ${className}`}
       aria-label="Investment preview"
     >
       <div className="flex flex-col gap-1 border-b border-line pb-4">
@@ -105,10 +105,10 @@ export function InvestmentPanel({
         </div>
       ) : null}
 
-      <form className="mt-4 flex flex-col gap-4" onSubmit={(e) => e.preventDefault()}>
+      <form className="mt-4 flex flex-col gap-4 min-w-0" onSubmit={(e) => e.preventDefault()}>
         {/* Amount Input */}
-        <div className="flex flex-col gap-1.5">
-          <div className="flex items-baseline justify-between">
+        <div className="flex flex-col gap-1.5 min-w-0">
+          <div className="flex flex-wrap items-baseline justify-between gap-1">
             <label
               htmlFor="investment-amount"
               className="text-sm font-medium text-ink-muted"
@@ -131,9 +131,9 @@ export function InvestmentPanel({
               placeholder="e.g. 1000000"
               aria-invalid={!validation.isValid}
               aria-describedby={
-                validation.errorMessage ? "investment-error" : "investment-hint"
+                validation.errorMessage ? "investment-error investment-hint" : "investment-hint"
               }
-              className="ap-tabular w-full rounded-lg border border-line-strong bg-surface px-3 py-2.5 text-sm text-ink placeholder:text-ink-subtle"
+              className="ap-tabular w-full rounded-lg border border-line-strong bg-surface px-3 py-2.5 text-sm text-ink placeholder:text-ink-subtle focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 focus-visible:border-brand"
             />
           </div>
 
@@ -145,7 +145,8 @@ export function InvestmentPanel({
                 key={preset.value}
                 type="button"
                 onClick={() => setAmount(preset.value)}
-                className={`rounded border px-2 py-0.5 text-2xs font-medium transition-colors ${
+                aria-pressed={amount === preset.value}
+                className={`rounded border px-2 py-0.5 text-2xs font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand ${
                   amount === preset.value
                     ? "border-brand bg-brand-soft text-brand"
                     : "border-line bg-surface-sunken text-ink-muted hover:border-line-strong hover:text-ink"
@@ -170,14 +171,14 @@ export function InvestmentPanel({
 
         {/* Calculated Allocation Preview */}
         <div
-          className={`rounded-lg border p-4 ${
+          className={`rounded-lg border p-4 min-w-0 ${
             validation.isValid
               ? "border-brand/30 bg-brand-soft/30 text-ink-strong"
               : "border-line bg-surface-sunken text-ink-subtle"
           }`}
           aria-live="polite"
         >
-          <div className="flex items-baseline justify-between gap-2">
+          <div className="flex flex-wrap items-baseline justify-between gap-1">
             <span className="text-xs font-medium uppercase tracking-wider text-ink-muted">
               Estimated Allocation
             </span>
@@ -196,7 +197,7 @@ export function InvestmentPanel({
           </div>
 
           {validation.isValid && validation.amountBigInt !== null && validation.allocationTokens !== null ? (
-            <p className="mt-2 text-xs text-ink-muted ap-tabular">
+            <p className="mt-2 text-xs text-ink-muted ap-tabular break-words">
               Calculation: {formatWholeUnits(validation.amountBigInt)} mIDR ÷{" "}
               {formatWholeUnits(tokenPrice)} mIDR per token ={" "}
               {formatWholeUnits(validation.allocationTokens)} {tokenSymbol}
@@ -215,12 +216,13 @@ export function InvestmentPanel({
         </div>
 
         {/* Action Button */}
-        <div className="flex flex-col gap-2 pt-2">
+        <div className="flex flex-col gap-2 pt-2 min-w-0">
           <ActionButton
             label={`Invest in ${tokenSymbol}`}
             tone="primary"
             disabled
             missingPrerequisite={missingPrerequisite}
+            className="w-full"
           />
           <p className="text-2xs text-ink-subtle">
             All primary purchases deposit mIDR into OfferingEscrow until the offering reaches
