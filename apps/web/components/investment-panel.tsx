@@ -9,17 +9,30 @@ import {
   type ChainDataState,
 } from "@/lib/client/view-models";
 import { useWallet } from "@/lib/client/wallet-context";
-import { useInvestorFlow } from "@/lib/client/use-investor-flow";
+import {
+  deriveInvestorAction,
+  evaluateWriteBoundary,
+  isInvestorTxPending,
+  useInvestorFlow,
+} from "@/lib/client/use-investor-flow";
+import { describeOfferingEconomicsMismatch } from "@/lib/client/chain-client";
+import type { AssetId } from "@archprop/shared";
 
 /**
- * Interaction-ready investment preview panel for property detail.
+ * Interaction-ready investment panel for property detail.
  *
  * Provides whole-token validation, calculated AVNUSA allocations, clear demo
- * currency disclosures, live chain reads from Escrow and IdentityRegistry,
- * and receipt-confirmed approve/invest execution.
+ * currency disclosures, live chain reads from OfferingEscrow and
+ * IdentityRegistry, and receipt-confirmed approve/invest execution.
+ *
+ * Every prerequisite is rechecked against freshly read chain data immediately
+ * before a write, so the panel never acts on a stale balance, allowance,
+ * approval, offering status, or cap — and never on a previous wallet's values.
  */
 
 export interface InvestmentPanelProps {
+  /** Chain asset ID, so the offering is read live for this property. */
+  assetId?: AssetId | undefined;
   /** Unit price of the property token in whole mIDR (0 decimals). */
   tokenPrice: bigint;
   /** Property token symbol, default "AVNUSA". */
@@ -48,6 +61,7 @@ const PRESET_AMOUNTS = [
 ] as const;
 
 export function InvestmentPanel({
+  assetId,
   tokenPrice,
   tokenSymbol = "AVNUSA",
   offeringTarget,
@@ -64,94 +78,84 @@ export function InvestmentPanel({
   const defaultWallet = useWallet();
   const wallet = customWallet ?? defaultWallet;
 
-  const defaultFlow = useInvestorFlow({ offeringId });
+  const defaultFlow = useInvestorFlow({
+    assetId,
+    offeringId,
+    expectedTokenPrice: tokenPrice,
+    expectedOfferingTarget: offeringTarget ?? null,
+  });
   const flow = customInvestorFlow ?? defaultFlow;
 
-  const effectiveRemainingCap =
-    remainingCap ?? (flow.offering ? flow.offering.remainingCap : null);
+  // Live chain values always win over anything the page rendered earlier.
+  const liveOffering = flow.offering;
+  const effectiveRemainingCap = liveOffering ? liveOffering.remainingCap : (remainingCap ?? null);
+  const effectiveOfferingStatus = liveOffering ? liveOffering.status : (offeringStatus ?? null);
 
-  const effectiveOfferingStatus =
-    offeringStatus ?? (flow.offering ? flow.offering.status : null);
+  const economicsMismatch = describeOfferingEconomicsMismatch(liveOffering, {
+    tokenPrice,
+    offeringTarget,
+  });
 
   const validation = validateInvestmentInput({
     rawAmount: amount,
-    tokenPrice,
+    tokenPrice: liveOffering ? liveOffering.tokenPrice : tokenPrice,
     remainingCap: effectiveRemainingCap,
   });
 
-  // Calculate prerequisite lock
-  let missingPrerequisite: string | undefined;
-  let actionLabel = `Invest in ${tokenSymbol}`;
-  let isActionDisabled = true;
+  const txPhase = flow.txState.phase;
+  const isPendingOutcome = isInvestorTxPending(txPhase);
 
-  if (!validation.isValid) {
-    missingPrerequisite = validation.errorMessage ?? "a valid investment amount";
-    isActionDisabled = true;
-  } else if (!wallet.isConnected) {
-    missingPrerequisite =
-      "a connected investor wallet on Arbitrum Sepolia (live chain adapter pending FE-002)";
-    isActionDisabled = true;
-  } else if (wallet.isWrongNetwork) {
-    missingPrerequisite =
-      "connected to wrong network; switch to Arbitrum Sepolia (chain 421614)";
-    actionLabel = "Switch to Arbitrum Sepolia";
-    isActionDisabled = true;
-  } else if (effectiveOfferingStatus && effectiveOfferingStatus !== "OPEN") {
-    missingPrerequisite = `Offering is ${effectiveOfferingStatus.toLowerCase()}; only open offerings accept investments`;
-    isActionDisabled = true;
-  } else if (flow.investor) {
-    if (!flow.investor.isApproved) {
-      missingPrerequisite = "Investor wallet is not approved in IdentityRegistry";
-      isActionDisabled = true;
-    } else if (
-      validation.amountBigInt !== null &&
-      flow.investor.mIdrBalance < validation.amountBigInt
-    ) {
-      missingPrerequisite = `Insufficient mIDR balance (you have ${formatWholeUnits(
-        flow.investor.mIdrBalance,
-      )} mIDR, need ${formatWholeUnits(validation.amountBigInt)} mIDR)`;
-      isActionDisabled = true;
-    } else if (
-      validation.amountBigInt !== null &&
-      effectiveRemainingCap !== null &&
-      effectiveRemainingCap !== undefined &&
-      validation.amountBigInt > effectiveRemainingCap
-    ) {
-      missingPrerequisite = `Investment amount exceeds remaining offering cap (${formatWholeUnits(
-        effectiveRemainingCap,
-      )} mIDR)`;
-      isActionDisabled = true;
-    } else {
-      isActionDisabled = false;
-      missingPrerequisite = undefined;
-      // Determine Approve vs Invest action
-      if (
-        validation.amountBigInt !== null &&
-        flow.investor.allowance < validation.amountBigInt
-      ) {
-        actionLabel = "Approve mIDR for Escrow";
-      } else {
-        actionLabel = `Invest in ${tokenSymbol}`;
-      }
-    }
-  }
+  const decision = evaluateWriteBoundary({
+    walletAddress: wallet.address,
+    chainId: wallet.chainId,
+    amount: validation.amountBigInt,
+    investor: flow.investor,
+    offering: liveOffering,
+    displayedTokenPrice: tokenPrice,
+    displayedOfferingTarget: offeringTarget ?? null,
+    txPhase,
+  });
+
+  const nextAction = deriveInvestorAction(flow.investor, validation.amountBigInt);
+  const actionLabel =
+    nextAction === "approve"
+      ? "Approve mIDR for Escrow"
+      : wallet.isWrongNetwork
+        ? "Switch to Arbitrum Sepolia"
+        : `Invest in ${tokenSymbol}`;
+
+  const isActionDisabled = !decision.canWrite;
+  // An invalid amount is the most actionable message, so it wins over the
+  // more general prerequisite the boundary reports for the same condition.
+  const missingPrerequisite = !validation.isValid
+    ? (validation.errorMessage ?? "a valid investment amount")
+    : (decision.reason ?? undefined);
 
   const isBusy =
-    flow.txState.phase === "awaiting-signature" ||
-    flow.txState.phase === "submitted" ||
-    flow.txState.phase === "confirming";
+    txPhase === "awaiting-signature" || txPhase === "submitted" || txPhase === "confirming";
 
   const handleAction = async () => {
     if (isActionDisabled || isBusy || validation.amountBigInt === null) {
       return;
     }
 
-    if (actionLabel.startsWith("Approve")) {
+    if (nextAction === "approve") {
       await flow.approve(validation.amountBigInt);
-    } else if (actionLabel.startsWith("Invest")) {
+    } else {
       await flow.invest(validation.amountBigInt);
     }
   };
+
+  const successDescription =
+    flow.txState.action === "approve"
+      ? `The mIDR approval of ${
+          flow.txState.amount !== null ? formatWholeUnits(flow.txState.amount) : "—"
+        } mIDR to OfferingEscrow is confirmed on-chain. This transaction approved funds only; it did not invest.`
+      : flow.txState.action === "invest"
+        ? `The investment of ${
+            flow.txState.amount !== null ? formatWholeUnits(flow.txState.amount) : "—"
+          } mIDR into OfferingEscrow is confirmed on-chain.`
+        : undefined;
 
   return (
     <div
@@ -176,6 +180,15 @@ export function InvestmentPanel({
         </p>
       </div>
 
+      {/* Live offering economics that disagree with the page's constants fail closed */}
+      {economicsMismatch ? (
+        <p role="alert" className="mt-4 rounded-lg border border-critical/30 bg-critical-soft p-3 text-xs text-critical">
+          <span className="font-semibold">Investing is disabled:</span> {economicsMismatch} The
+          live offering economics must match the published Villa Nusa constants before a
+          write can be prepared.
+        </p>
+      ) : null}
+
       {/* Connected Investor Position Context */}
       {wallet.isConnected && wallet.address ? (
         <div className="mt-4 rounded-lg border border-line bg-surface-sunken p-3 text-xs">
@@ -194,7 +207,7 @@ export function InvestmentPanel({
                   : "✗ Not Approved in IdentityRegistry"}
               </span>
             ) : (
-              <span className="text-ink-subtle">Checking identity registry…</span>
+              <span className="text-ink-subtle">Reading IdentityRegistry for this wallet…</span>
             )}
           </div>
           {flow.investor ? (
@@ -233,13 +246,14 @@ export function InvestmentPanel({
             </p>
           ) : chainState.status === "unavailable" ? (
             <p className="text-ink-muted">
-              <span className="font-semibold">Chain adapter status:</span>{" "}
+              <span className="font-semibold">Offering read:</span>{" "}
               {chainState.reason}
             </p>
           ) : (
             <p className="text-ink-muted">
-              <span className="font-semibold">Chain adapter status:</span>{" "}
-              Live investment writes require a connected wallet and chain adapter (FE-002).
+              <span className="font-semibold">Offering read:</span>{" "}
+              A connected wallet and a configured chain RPC are required to read
+              live offering accounting.
             </p>
           )}
         </div>
@@ -256,7 +270,8 @@ export function InvestmentPanel({
               Amount (mIDR)
             </label>
             <span className="text-xs text-ink-subtle">
-              Unit price: {formatWholeUnits(tokenPrice)} mIDR / token
+              Unit price:{" "}
+              {formatWholeUnits(liveOffering ? liveOffering.tokenPrice : tokenPrice)} mIDR / token
             </span>
           </div>
 
@@ -299,7 +314,7 @@ export function InvestmentPanel({
 
           <p id="investment-hint" className="text-xs text-ink-subtle">
             Both mIDR and {tokenSymbol} use 0 decimals. Amounts must be whole multiples
-            of {formatWholeUnits(tokenPrice)} mIDR.
+            of {formatWholeUnits(liveOffering ? liveOffering.tokenPrice : tokenPrice)} mIDR.
           </p>
 
           {validation.errorMessage ? (
@@ -339,8 +354,8 @@ export function InvestmentPanel({
           {validation.isValid && validation.amountBigInt !== null && validation.allocationTokens !== null ? (
             <p className="mt-2 text-xs text-ink-muted ap-tabular break-words">
               Calculation: {formatWholeUnits(validation.amountBigInt)} mIDR ÷{" "}
-              {formatWholeUnits(tokenPrice)} mIDR per token ={" "}
-              {formatWholeUnits(validation.allocationTokens)} {tokenSymbol}
+              {formatWholeUnits(liveOffering ? liveOffering.tokenPrice : tokenPrice)} mIDR per
+              token = {formatWholeUnits(validation.allocationTokens)} {tokenSymbol}
             </p>
           ) : (
             <p className="mt-2 text-xs text-ink-subtle">
@@ -348,7 +363,13 @@ export function InvestmentPanel({
             </p>
           )}
 
-          {offeringTarget ? (
+          {liveOffering ? (
+            <p className="mt-1 text-2xs text-ink-subtle ap-tabular break-words">
+              Live offering: {effectiveOfferingStatus} · target{" "}
+              {formatWholeUnits(liveOffering.target)} mIDR · remaining cap{" "}
+              {formatWholeUnits(liveOffering.remainingCap)} mIDR
+            </p>
+          ) : offeringTarget ? (
             <p className="mt-1 text-2xs text-ink-subtle">
               Offering target: {formatWholeUnits(offeringTarget)} mIDR
             </p>
@@ -356,20 +377,14 @@ export function InvestmentPanel({
         </div>
 
         {/* Transaction lifecycle status if transaction occurred or in flight */}
-        {flow.txState.phase !== "idle" ? (
+        {txPhase !== "idle" ? (
           <div className="pt-1">
             <TransactionLifecycle
               state={flow.txState}
               actionLabel={actionLabel}
-              successDescription={
-                flow.txState.phase === "confirmed"
-                  ? actionLabel.startsWith("Approve")
-                    ? "mIDR approval confirmed. You can now invest in the offering."
-                    : `Investment of ${amount} mIDR confirmed on-chain in OfferingEscrow.`
-                  : undefined
-              }
+              successDescription={successDescription}
             />
-            {flow.txState.phase === "confirmed" && flow.txState.txHash ? (
+            {txPhase === "confirmed" && flow.txState.txHash ? (
               <div className="mt-2 rounded border border-brand/40 bg-brand-soft/30 p-2.5 text-xs text-brand">
                 <span className="font-semibold">Receipt Confirmed:</span>{" "}
                 <a
@@ -397,9 +412,9 @@ export function InvestmentPanel({
             className="w-full"
           />
           <p className="text-2xs text-ink-subtle">
-            All primary purchases deposit mIDR into OfferingEscrow until the offering reaches
-            its target. No wallet signing is triggered because the live chain adapter is
-            pending merge (FE-002).
+            Purchases deposit demo mIDR into OfferingEscrow until the offering reaches its
+            target. Approval and investment are separate on-chain transactions and each one
+            shows its own transaction hash. {isPendingOutcome ? "A previous transaction for this wallet is still awaiting its chain outcome, so no further action can be sent." : null}
           </p>
         </div>
       </form>
