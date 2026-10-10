@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   CANONICAL_VILLA_NUSA,
@@ -9,6 +12,29 @@ import {
 describe("scripts/validate-state Unit Tests", () => {
   const validAddr1 = "0x976EA74026E726554dB657fA54763abd0C3a0aa9" as const;
   const validAddr2 = "0x14dC79964da2C08b23698B3D3cc7Ca32193d9955" as const;
+
+  function makeValidFixture() {
+    return {
+      chainId: EXPECTED_CHAIN_ID,
+      deployedAtBlock: 12,
+      deployer: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+      contracts: {
+        registry: "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+        identityRegistry: "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512",
+        mockIdr: "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0",
+        offeringEscrow: "0xCf7Ed3Ecc611578521759ec64260C66c738886b9",
+        revenueDistributor: "0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9",
+      },
+      propertyToken: "0x5FC8d32690cc91D4c39d9d3abcBD16989F875707",
+      asset: {
+        assetId: CANONICAL_VILLA_NUSA.assetId,
+        tokenSupply: CANONICAL_VILLA_NUSA.tokenSupply.toString(),
+        tokenPrice: CANONICAL_VILLA_NUSA.tokenPrice.toString(),
+        target: CANONICAL_VILLA_NUSA.target.toString(),
+        propertyValue: CANONICAL_VILLA_NUSA.propertyValue.toString(),
+      },
+    };
+  }
 
   describe("ARCHPROP_INVESTORS Fail-Closed Parser", () => {
     it("fails closed when ARCHPROP_INVESTORS is undefined", () => {
@@ -26,6 +52,30 @@ describe("scripts/validate-state Unit Tests", () => {
     it("fails closed when ARCHPROP_INVESTORS has only whitespace", () => {
       expect(() => parseInvestors("   ")).toThrow(
         /ARCHPROP_INVESTORS is missing or empty/i,
+      );
+    });
+
+    it("fails closed on leading comma (empty segment)", () => {
+      expect(() => parseInvestors(`,${validAddr1},${validAddr2}`)).toThrow(
+        /empty CSV segment/i,
+      );
+    });
+
+    it("fails closed on trailing comma (empty segment)", () => {
+      expect(() => parseInvestors(`${validAddr1},${validAddr2},`)).toThrow(
+        /empty CSV segment/i,
+      );
+    });
+
+    it("fails closed on consecutive commas (empty segment)", () => {
+      expect(() => parseInvestors(`${validAddr1},,${validAddr2}`)).toThrow(
+        /empty CSV segment/i,
+      );
+    });
+
+    it("fails closed on whitespace-only comma segment", () => {
+      expect(() => parseInvestors(`${validAddr1},   ,${validAddr2}`)).toThrow(
+        /empty CSV segment/i,
       );
     });
 
@@ -70,36 +120,13 @@ describe("scripts/validate-state Unit Tests", () => {
       );
     });
 
-    it("parses valid two distinct investor addresses cleanly", () => {
+    it("parses valid two distinct investor addresses cleanly with surrounding whitespace", () => {
       const res = parseInvestors(`  ${validAddr1}  ,  ${validAddr2}  `);
       expect(res).toEqual([validAddr1, validAddr2]);
     });
   });
 
   describe("Deployment JSON Fail-Closed Validator", () => {
-    function makeValidFixture() {
-      return {
-        chainId: EXPECTED_CHAIN_ID,
-        deployedAtBlock: 12,
-        deployer: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
-        contracts: {
-          registry: "0x5FbDB2315678afecb367f032d93F642f64180aa3",
-          identityRegistry: "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512",
-          mockIdr: "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0",
-          offeringEscrow: "0xCf7Ed3Ecc611578521759ec64260C66c738886b9",
-          revenueDistributor: "0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9",
-        },
-        propertyToken: "0x5FC8d32690cc91D4c39d9d3abcBD16989F875707",
-        asset: {
-          assetId: CANONICAL_VILLA_NUSA.assetId,
-          tokenSupply: CANONICAL_VILLA_NUSA.tokenSupply.toString(),
-          tokenPrice: CANONICAL_VILLA_NUSA.tokenPrice.toString(),
-          target: CANONICAL_VILLA_NUSA.target.toString(),
-          propertyValue: CANONICAL_VILLA_NUSA.propertyValue.toString(),
-        },
-      };
-    }
-
     it("accepts a fully canonical local deployment fixture", () => {
       const fixture = makeValidFixture();
       const res = validateDeploymentJson(fixture);
@@ -223,6 +250,26 @@ describe("scripts/validate-state Unit Tests", () => {
   });
 
   describe("validateState Function Fail-Closed and Integration Checks", () => {
+    it("fails closed when ARCHPROP_INVESTORS is missing without requiring a deployment file", async () => {
+      const { validateState } = await import("../../../scripts/validate-state");
+      await expect(
+        validateState({
+          deploymentPath: "/nonexistent/deployment/path.json",
+          investors: "",
+        }),
+      ).rejects.toThrow(/ARCHPROP_INVESTORS is missing or empty/i);
+    });
+
+    it("fails closed when ARCHPROP_INVESTORS contains empty segment without requiring a deployment file", async () => {
+      const { validateState } = await import("../../../scripts/validate-state");
+      await expect(
+        validateState({
+          deploymentPath: "/nonexistent/deployment/path.json",
+          investors: `,${validAddr1},${validAddr2}`,
+        }),
+      ).rejects.toThrow(/empty CSV segment/i);
+    });
+
     it("fails closed when deployment file does not exist", async () => {
       const { validateState } = await import("../../../scripts/validate-state");
       await expect(
@@ -233,27 +280,22 @@ describe("scripts/validate-state Unit Tests", () => {
       ).rejects.toThrow(/Deployment file not found at/i);
     });
 
-    it("fails closed when ARCHPROP_INVESTORS is missing in validateState options", async () => {
+    it("fails closed when RPC returns mismatched chainId using temporary fixture", async () => {
       const { validateState } = await import("../../../scripts/validate-state");
-      await expect(
-        validateState({
-          deploymentPath: "/tmp/archprop-worktrees/integration-qa/deployments/local.json",
-          investors: "",
-        }),
-      ).rejects.toThrow(/ARCHPROP_INVESTORS is missing or empty/i);
-    });
-
-    it("fails closed when RPC returns mismatched chainId", async () => {
-      const { validateState } = await import("../../../scripts/validate-state");
-      // Use mock RPC URL returning chain ID error or invalid port
-      await expect(
-        validateState({
-          deploymentPath: "/tmp/archprop-worktrees/integration-qa/deployments/local.json",
-          investors: `${validAddr1},${validAddr2}`,
-          rpcUrl: "http://127.0.0.1:54321", // unreachable
-        }),
-      ).rejects.toThrow();
+      const tempDir = mkdtempSync(join(tmpdir(), "archprop-test-"));
+      const tempDeploymentPath = join(tempDir, "deployment.json");
+      writeFileSync(tempDeploymentPath, JSON.stringify(makeValidFixture()));
+      try {
+        await expect(
+          validateState({
+            deploymentPath: tempDeploymentPath,
+            investors: `${validAddr1},${validAddr2}`,
+            rpcUrl: "http://127.0.0.1:54321", // unreachable
+          }),
+        ).rejects.toThrow();
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
     });
   });
 });
-

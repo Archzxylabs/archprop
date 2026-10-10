@@ -206,18 +206,8 @@ export function getDeploymentPath(customPath?: string): string {
  * Verifies that all required Foundry contract artifacts exist.
  */
 export function checkArtifactsPrerequisite(customDir?: string): ArtifactCheck {
-  let artifactsDir = resolveArtifactsDir(customDir);
-  if (!customDir && !process.env.ARCHPROP_ARTIFACTS_DIR && !existsSync(artifactsDir)) {
-    const siblingOut = resolve("/tmp/archprop-worktrees/contracts/packages/contracts/out");
-    if (existsSync(siblingOut)) {
-      artifactsDir = siblingOut;
-    } else {
-      const rootOut = resolve("/home/pupulion/archprop/packages/contracts/out");
-      if (existsSync(rootOut)) {
-        artifactsDir = rootOut;
-      }
-    }
-  }
+  const artifactsDir = resolveArtifactsDir(customDir);
+  const isExplicit = Boolean(customDir?.trim() || process.env.ARCHPROP_ARTIFACTS_DIR?.trim());
   const missingArtifacts: string[] = [];
 
   if (!existsSync(artifactsDir)) {
@@ -226,7 +216,9 @@ export function checkArtifactsPrerequisite(customDir?: string): ArtifactCheck {
       artifactsDir,
       missingArtifacts: [...REQUIRED_CONTRACTS],
       diagnostic:
-        `Foundry artifacts directory not found at "${artifactsDir}". ` +
+        (isExplicit
+          ? `Explicit Foundry artifacts directory not found at "${artifactsDir}". `
+          : `Foundry artifacts directory not found at "${artifactsDir}". `) +
         `SC-001 contracts are not available or have not been compiled in this worktree. ` +
         `Golden path execution is blocked until SC-001 is merged and built.`,
     };

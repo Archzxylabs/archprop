@@ -73,6 +73,7 @@ export const readAbi = parseAbi([
   "function assetStatus(bytes32 assetId) view returns (uint8)",
   "function assetToken(bytes32 assetId) view returns (address)",
   "function escrow() view returns (address)",
+  "function getLatestAttestation(bytes32 assetId, uint8 kind) view returns ((address verifier, uint8 attestationType, bytes32 evidenceHash, uint256 value, uint64 timestamp, bool valid))",
   "function allocationOf(uint256 offeringId, address investor) view returns (uint256)",
   "function paymentOf(uint256 offeringId, address investor) view returns (uint256)",
   "function tokensClaimed(uint256 offeringId, address investor) view returns (bool)",
@@ -86,7 +87,7 @@ export const readAbi = parseAbi([
 
 /**
  * Validates and extracts exactly two distinct non-zero EVM investor addresses.
- * Fails closed on absent, empty, malformed, duplicate, or non-two-address input.
+ * Fails closed on absent, empty, malformed, duplicate, non-two-address, or empty CSV segment input.
  */
 export function parseInvestors(rawEnv?: string): [`0x${string}`, `0x${string}`] {
   if (!rawEnv || rawEnv.trim().length === 0) {
@@ -94,10 +95,15 @@ export function parseInvestors(rawEnv?: string): [`0x${string}`, `0x${string}`] 
       "ARCHPROP_INVESTORS is missing or empty. Exactly two distinct funded investor addresses are required.",
     );
   }
-  const parts = rawEnv
-    .split(",")
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
+  const parts = rawEnv.split(",").map((s) => s.trim());
+
+  for (const part of parts) {
+    if (part.length === 0) {
+      throw new Error(
+        "ARCHPROP_INVESTORS contains an empty CSV segment (e.g. leading, trailing, or consecutive commas). Exactly two distinct funded investor addresses are required.",
+      );
+    }
+  }
 
   if (parts.length !== 2) {
     throw new Error(
@@ -293,6 +299,9 @@ export async function validateState(options?: {
   rpcUrl?: string | undefined;
   investors?: string | undefined;
 }): Promise<{ ok: boolean; checks: CheckResult[] }> {
+  // 0. Validate investor addresses first so missing, malformed, or empty segment inputs fail closed immediately
+  const investors = parseInvestors(options?.investors ?? process.env.ARCHPROP_INVESTORS);
+
   const deploymentPath = getDeploymentPath(options?.deploymentPath);
   if (!existsSync(deploymentPath)) {
     throw new Error(
@@ -302,7 +311,6 @@ export async function validateState(options?: {
 
   const rawDeployment = JSON.parse(readFileSync(deploymentPath, "utf8"));
   const d = validateDeploymentJson(rawDeployment);
-  const investors = parseInvestors(options?.investors ?? process.env.ARCHPROP_INVESTORS);
 
   const rpcUrl = options?.rpcUrl ?? RPC_URL;
   const publicClient = createPublicClient({ transport: http(rpcUrl) });
@@ -358,6 +366,31 @@ export async function validateState(options?: {
     "registry escrow configured",
     configuredEscrow.toLowerCase() === escrowAddress.toLowerCase(),
     `escrow=${configuredEscrow}`,
+  );
+
+  // 4. Validate canonical Villa Nusa 10B indicative valuation from on-chain VALUATION attestation
+  const valAtt = await publicClient.readContract({
+    address: registryAddress,
+    abi: readAbi,
+    functionName: "getLatestAttestation",
+    args: [assetId, 1], // 1 = AttestationType.VALUATION
+  });
+  check("valuation attestation valid", valAtt.valid === true, `valid=${valAtt.valid}`);
+  check(
+    "valuation attestation matches canonical 10B indicative value",
+    valAtt.value === CANONICAL_VILLA_NUSA.propertyValue && valAtt.value === 10_000_000_000n,
+    `value=${valAtt.value} expected=${CANONICAL_VILLA_NUSA.propertyValue}`,
+  );
+  check(
+    "valuation attestation verifier non-zero",
+    isNonZeroAddress(valAtt.verifier),
+    `verifier=${valAtt.verifier}`,
+  );
+  check(
+    "valuation attestation evidence hash non-zero",
+    typeof valAtt.evidenceHash === "string" &&
+      valAtt.evidenceHash !== "0x0000000000000000000000000000000000000000000000000000000000000000",
+    `evidenceHash=${valAtt.evidenceHash}`,
   );
 
   // 4. Derive/confirm offeringId
@@ -510,6 +543,30 @@ export async function validateState(options?: {
       `revenue claimed ${investor.slice(0, 10)}`,
       revClaimed === true,
       `claimed=${revClaimed}`,
+    );
+
+    const claimLogs = await publicClient.getLogs({
+      address: distributorAddress,
+      event: parseAbiItem(
+        "event RevenueClaimed(uint256 indexed epochId, address indexed investor, uint256 amount)",
+      ),
+      args: {
+        epochId,
+        investor,
+      },
+      fromBlock: 0n,
+    });
+    const totalClaimedFromEvents = claimLogs.reduce(
+      (sum, log) => sum + (log.args.amount ?? 0n),
+      0n,
+    );
+    const expectedRevenuePayout = CANONICAL_VILLA_NUSA.revenueAmount / 2n; // 50,000,000
+    check(
+      `revenue payout event ${investor.slice(0, 10)}`,
+      claimLogs.length > 0 &&
+        totalClaimedFromEvents === expectedRevenuePayout &&
+        totalClaimedFromEvents === 50_000_000n,
+      `amount=${totalClaimedFromEvents} expected=${expectedRevenuePayout} events=${claimLogs.length}`,
     );
   }
 

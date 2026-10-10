@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
@@ -26,18 +26,22 @@ function findRepoRoot(fromDir: string): string {
 
 const REPO_ROOT = findRepoRoot(MODULE_DIR);
 
-function findArtifactsDir(): string | undefined {
-  if (process.env.ARCHPROP_ARTIFACTS_DIR) {
-    const p = resolve(process.env.ARCHPROP_ARTIFACTS_DIR);
-    if (existsSync(p)) return p;
+export function resolveArtifactsDir(): { path: string; isExplicit: boolean; exists: boolean } {
+  const envVal = process.env.ARCHPROP_ARTIFACTS_DIR?.trim();
+  if (envVal && envVal.length > 0) {
+    const explicitPath = isAbsolute(envVal) ? envVal : resolve(REPO_ROOT, envVal);
+    return {
+      path: explicitPath,
+      isExplicit: true,
+      exists: existsSync(explicitPath),
+    };
   }
-  const defaultRepoOut = resolve(REPO_ROOT, "packages/contracts/out");
-  if (existsSync(defaultRepoOut)) return defaultRepoOut;
-
-  const siblingOut = resolve("/tmp/archprop-worktrees/contracts/packages/contracts/out");
-  if (existsSync(siblingOut)) return siblingOut;
-
-  return undefined;
+  const defaultPath = resolve(REPO_ROOT, "packages/contracts/out");
+  return {
+    path: defaultPath,
+    isExplicit: false,
+    exists: existsSync(defaultPath),
+  };
 }
 
 type AbiItem = {
@@ -193,22 +197,24 @@ function reconcileAbi(
 }
 
 describe("ABI Reconciliation with Compiled Foundry Artifacts", () => {
-  const artifactsDir = findArtifactsDir();
+  const artifactsInfo = resolveArtifactsDir();
   const isExplicitlyRequested =
     process.env.ARCHPROP_CHECK_ARTIFACTS === "1" ||
-    process.env.ARCHPROP_RUN_LOCAL_E2E === "1";
+    process.env.ARCHPROP_RUN_LOCAL_E2E === "1" ||
+    artifactsInfo.isExplicit;
 
-  if (!artifactsDir) {
+  if (!artifactsInfo.exists) {
     if (isExplicitlyRequested) {
-      it("fails when compiled artifacts are explicitly requested but absent", () => {
+      it("fails when compiled artifacts are explicitly requested or configured but absent", () => {
         expect.fail(
-          "Compiled Foundry contract artifacts were explicitly requested via ARCHPROP_CHECK_ARTIFACTS=1, " +
-            "but could not be located in packages/contracts/out or ARCHPROP_ARTIFACTS_DIR.",
+          artifactsInfo.isExplicit
+            ? `Explicit ARCHPROP_ARTIFACTS_DIR "${artifactsInfo.path}" does not exist. Reconciliation failed.`
+            : `Compiled Foundry contract artifacts were explicitly requested via ARCHPROP_CHECK_ARTIFACTS=1, but default directory "${artifactsInfo.path}" does not exist.`,
         );
       });
     } else {
       it.skip(
-        "[OFFLINE SKIP] Compiled Foundry artifacts not available. Set ARCHPROP_CHECK_ARTIFACTS=1 or ARCHPROP_ARTIFACTS_DIR to run reconciliation.",
+        `[OFFLINE SKIP] Compiled Foundry artifacts not available at "${artifactsInfo.path}". Set ARCHPROP_CHECK_ARTIFACTS=1 or ARCHPROP_ARTIFACTS_DIR to run reconciliation.`,
         () => {},
       );
     }
@@ -216,7 +222,7 @@ describe("ABI Reconciliation with Compiled Foundry Artifacts", () => {
   }
 
   function loadArtifactAbi(contractName: string): unknown[] {
-    const artifactPath = join(artifactsDir!, `${contractName}.sol`, `${contractName}.json`);
+    const artifactPath = join(artifactsInfo.path, `${contractName}.sol`, `${contractName}.json`);
     expect(existsSync(artifactPath), `Artifact file ${artifactPath} must exist`).toBe(true);
     const data = JSON.parse(readFileSync(artifactPath, "utf8"));
     expect(Array.isArray(data.abi), `Artifact ${contractName} must contain an ABI array`).toBe(true);
@@ -306,6 +312,23 @@ describe("ABI Reconciliation with Compiled Foundry Artifacts", () => {
       expect(() =>
         reconcileAbi("TestContract", mockChainAbi, mockArtifactAbi),
       ).toThrow(/Indexed flag mismatch for parameter 0/i);
+    });
+
+    it("fails closed when explicit ARCHPROP_ARTIFACTS_DIR does not exist", () => {
+      const prevEnv = process.env.ARCHPROP_ARTIFACTS_DIR;
+      process.env.ARCHPROP_ARTIFACTS_DIR = "/nonexistent/test/artifacts";
+      try {
+        const info = resolveArtifactsDir();
+        expect(info.isExplicit).toBe(true);
+        expect(info.exists).toBe(false);
+        expect(info.path).toBe("/nonexistent/test/artifacts");
+      } finally {
+        if (prevEnv !== undefined) {
+          process.env.ARCHPROP_ARTIFACTS_DIR = prevEnv;
+        } else {
+          delete process.env.ARCHPROP_ARTIFACTS_DIR;
+        }
+      }
     });
   });
 });
