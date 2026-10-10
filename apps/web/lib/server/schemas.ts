@@ -245,3 +245,6 @@ export const verifierEvidenceAccessSchema = z
   });
 
 export type VerifierEvidenceAccessInput = z.infer<typeof verifierEvidenceAccessSchema>;
+
+export const verifierEvidenceIndexSchema = verifierEvidenceAccessSchema;
+export type VerifierEvidenceIndexInput = VerifierEvidenceAccessInput;

@@ -378,7 +378,10 @@ export async function checkRegistryRole(
       functionName: "hasRole",
       args: [role, account],
     });
-    return { ok: true, hasRole: Boolean(raw) };
+    if (typeof raw !== "boolean") {
+      return { ok: false, reason: "rpc_error" };
+    }
+    return { ok: true, hasRole: raw === true };
   } catch {
     return { ok: false, reason: "rpc_error" };
   }

@@ -342,4 +342,34 @@ describe("checkRegistryRole", () => {
     );
     expect(result).toEqual({ ok: false, reason: "rpc_error" });
   });
+
+  it("fails closed with rpc_error on a malformed truthy number response", async () => {
+    const result = await checkRegistryRole(
+      async () => 1,
+      REGISTRY,
+      ROLE,
+      ACCOUNT,
+    );
+    expect(result).toEqual({ ok: false, reason: "rpc_error" });
+  });
+
+  it("fails closed with rpc_error on a malformed truthy string response", async () => {
+    const result = await checkRegistryRole(
+      async () => "true",
+      REGISTRY,
+      ROLE,
+      ACCOUNT,
+    );
+    expect(result).toEqual({ ok: false, reason: "rpc_error" });
+  });
+
+  it("fails closed with rpc_error on a malformed truthy object response", async () => {
+    const result = await checkRegistryRole(
+      async () => ({}),
+      REGISTRY,
+      ROLE,
+      ACCOUNT,
+    );
+    expect(result).toEqual({ ok: false, reason: "rpc_error" });
+  });
 });
