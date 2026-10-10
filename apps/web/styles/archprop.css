@@ -978,3 +978,58 @@ ul.property-grid {
 .ap-page {
   overflow-wrap: anywhere;
 }
+
+/* Seventh navigation destination stays within the floating capsule. */
+@media (min-width: 1280px) and (max-width: 1399px) {
+  .nav-shell { gap: 10px; }
+  .nav-links { gap: 11px; font-size: 11px; }
+  .nav-actions, .wallet-actions { gap: 7px; }
+  .network-status { font-size: 9px; letter-spacing: 0; }
+}
+
+.faucet-disclosure {
+  padding: 20px 24px;
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--accent);
+  border-radius: 16px;
+  font-size: 13px;
+  line-height: 1.7;
+}
+.faucet-disclosure p { margin-top: 5px; color: #444; }
+.faucet-grid { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 24px; }
+.faucet-card, .faucet-summary { min-width: 0; border-radius: 24px; padding: 28px; }
+.faucet-card { border: 1px solid var(--line); }
+.faucet-card h2, .faucet-summary h2 { font-size: 24px; line-height: 1.25; }
+.faucet-card > h2 { margin-top: 12px; }
+.faucet-copy, .faucet-help { color: #555; font-size: 13px; line-height: 1.7; }
+.faucet-copy { margin-top: 12px; }
+.faucet-label { font-size: 13px; font-weight: 600; }
+.faucet-recipient { font-size: 12px; color: #555; }
+.faucet-recipient code { display: block; margin-top: 5px; font: 11px var(--mono); color: #111; overflow-wrap: anywhere; }
+.faucet-amount { display: flex; align-items: center; gap: 12px; }
+.faucet-page .faucet-amount input { width: 100%; min-width: 0; padding: 14px; border: 1px solid var(--line); border-radius: 12px; font-size: 24px; font-variant-numeric: tabular-nums; }
+.faucet-amount > span { flex-shrink: 0; font: 12px var(--mono); }
+.faucet-presets { display: flex; flex-wrap: wrap; gap: 8px; }
+.faucet-presets button { padding: 9px 12px; border: 1px solid var(--line); border-radius: 99px; background: #fff; font-size: 12px; }
+.faucet-presets button:hover:not(:disabled) { background: var(--accent); }
+.faucet-submit { width: 100%; justify-content: space-between; }
+.faucet-notice { padding: 16px; border-radius: 12px; background: #f5f5f5; font-size: 13px; line-height: 1.6; }
+.faucet-error { color: #b91c1c; font-size: 13px; line-height: 1.6; }
+.faucet-summary { background: #000; color: #fff; align-self: start; }
+.faucet-summary .ap-eyebrow { color: var(--accent); }
+.faucet-balance { margin-top: 16px; font: 600 32px var(--display); font-variant-numeric: tabular-nums; line-height: 1.25; }
+.faucet-refresh { margin-top: 16px; color: #fff; border: 1px solid #ffffff55; border-radius: 99px; padding: 9px 13px; font-size: 12px; }
+.faucet-transaction, .faucet-next { padding-top: 24px; border-top: 1px solid #ffffff40; }
+.faucet-summary h2 { font-size: 19px; }
+.faucet-summary p:where(:not(.ap-eyebrow):not(.faucet-balance)) { margin-top: 12px; font-size: 13px; line-height: 1.7; color: #ddd; }
+.faucet-summary p.faucet-error { color: #ffb5b5; }
+.faucet-summary a { display: inline-block; margin-top: 16px; color: var(--accent); font-size: 13px; text-decoration: underline; text-underline-offset: 4px; }
+.faucet-summary code { font: 10px var(--mono); overflow-wrap: anywhere; }
+.faucet-hash { display: block; margin-top: 10px; color: #bbb; }
+.faucet-page button:disabled { opacity: .5; }
+@media (max-width: 767px) {
+  .faucet-grid { grid-template-columns: minmax(0, 1fr); gap: 18px; }
+  .faucet-card, .faucet-summary { padding: 22px; }
+  .faucet-disclosure { padding: 16px 18px; }
+  .faucet-page .faucet-amount input { font-size: 21px; }
+}

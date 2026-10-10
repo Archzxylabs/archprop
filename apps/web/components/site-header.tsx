@@ -14,6 +14,7 @@ const NAV_ITEMS = [
   { href: "/verifier", label: "Verifier" },
   { href: "/portfolio", label: "Portfolio" },
   { href: "/admin", label: "Admin" },
+  { href: "/faucet", label: "Faucet" },
 ] as const;
 
 export function SiteHeader() {

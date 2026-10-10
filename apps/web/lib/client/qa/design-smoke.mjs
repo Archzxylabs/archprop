@@ -38,6 +38,7 @@ const routes = [
   "/verifier/ARCHPROP-001",
   "/portfolio",
   "/admin",
+  "/faucet",
 ];
 try {
   for (const width of [320, 375, 768, 1024, 1440]) {
@@ -190,7 +191,7 @@ try {
   await page.waitForTimeout(2100);
   await page.screenshot({ path: `${outputDir}/mobile-hero.png` });
   await page.getByRole("button", { name: "Open menu", exact: true }).click();
-  assert.equal(await page.locator("#primary-nav-mobile a").count(), 6);
+  assert.equal(await page.locator("#primary-nav-mobile a").count(), 7);
   await page.waitForTimeout(2100);
   await page.screenshot({ path: `${outputDir}/mobile-menu.png` });
   await page.keyboard.press("Escape");
@@ -228,7 +229,7 @@ try {
     viewport: { width: 375, height: 900 },
   });
   await plain.goto(baseUrl, { waitUntil: "networkidle" });
-  assert.equal(await plain.locator(".no-script-navigation a").count(), 6);
+  assert.equal(await plain.locator(".no-script-navigation a").count(), 7);
   assert.equal(await plain.locator(".story-panel").count(), 4);
   for (const panel of await plain.locator(".story-panel").all())
     assert.equal(
