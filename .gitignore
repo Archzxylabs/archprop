@@ -1,5 +1,7 @@
 node_modules/
 .next/
+.turbo/
+.vercel/
 out/
 coverage/
 coverage.lcov
@@ -8,6 +10,7 @@ dist/
 artifacts/
 broadcast/
 /packages/contracts/lib/
+/deployments/*.json
 env/
 .env
 .env.*
@@ -16,4 +19,8 @@ env/
 *.pem
 *.secret
 *.tsbuildinfo
+*.log
+.DS_Store
+.idea/
+.vscode/
 /.archprop-git-backup/
