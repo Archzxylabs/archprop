@@ -124,9 +124,9 @@ export default async function PropertyPage({ params }: PageProps) {
   }
 
   return (
-    <div className="mx-auto w-full max-w-6xl px-4 sm:px-5 py-8 sm:py-10">
+    <div className="ap-page property-page mx-auto w-full max-w-6xl px-4 sm:px-5 py-8 sm:py-10">
       {/* 1. Property overview */}
-      <section aria-labelledby="overview-heading" className="flex flex-col gap-4">
+      <section aria-labelledby="overview-heading" className="property-overview flex flex-col gap-4">
         <div className="flex flex-col gap-1">
           <p className="ap-eyebrow">{listing.externalId}</p>
           <h1 className="text-2xl font-semibold tracking-tight text-ink-strong sm:text-3xl">
@@ -197,7 +197,7 @@ export default async function PropertyPage({ params }: PageProps) {
       </section>
 
       {/* 2. Verification */}
-      <section aria-labelledby="verification-heading" className="mt-12">
+      <section aria-labelledby="verification-heading" className="property-detail-section mt-12" data-section="02">
         <h2 id="verification-heading" className="text-lg font-semibold text-ink-strong">
           Verification
         </h2>
@@ -252,7 +252,7 @@ export default async function PropertyPage({ params }: PageProps) {
       </section>
 
       {/* 3. Economic rights */}
-      <section aria-labelledby="economic-heading" className="mt-12">
+      <section aria-labelledby="economic-heading" className="property-detail-section mt-12" data-section="03">
         <h2 id="economic-heading" className="text-lg font-semibold text-ink-strong">
           Economic rights
         </h2>
@@ -280,7 +280,7 @@ export default async function PropertyPage({ params }: PageProps) {
       </section>
 
       {/* 4. Offering */}
-      <section aria-labelledby="offering-heading" className="mt-12">
+      <section aria-labelledby="offering-heading" className="property-detail-section mt-12" data-section="04">
         <h2 id="offering-heading" className="text-lg font-semibold text-ink-strong">
           Offering
         </h2>
@@ -353,7 +353,7 @@ export default async function PropertyPage({ params }: PageProps) {
       </section>
 
       {/* 5. On-chain proof */}
-      <section aria-labelledby="proof-heading" className="mt-12">
+      <section aria-labelledby="proof-heading" className="property-detail-section mt-12" data-section="05">
         <h2 id="proof-heading" className="text-lg font-semibold text-ink-strong">
           On-chain proof
         </h2>
@@ -400,7 +400,7 @@ export default async function PropertyPage({ params }: PageProps) {
       </section>
 
       {/* 6. Revenue / distributions */}
-      <section aria-labelledby="revenue-heading" className="mt-12">
+      <section aria-labelledby="revenue-heading" className="property-detail-section mt-12" data-section="06">
         <h2 id="revenue-heading" className="text-lg font-semibold text-ink-strong">
           Revenue / distributions
         </h2>

@@ -1,4 +1,7 @@
 @import "tailwindcss";
+@import "./fonts.css";
+@import "./archcore.css";
+@import "./archprop.css";
 
 @source "../**/*.{ts,tsx}";
 @source not "../**/*.test.{ts,tsx}";
@@ -7,41 +10,43 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 @theme {
-  /* Brand: teal, the ArchProp primary. */
-  --color-brand: #0f766e;
-  --color-brand-deep: #115e59;
-  --color-brand-soft: #ccfbf1;
-  --color-brand-line: #5eead4;
+  /* Archcore palette; semantic error colors remain distinct. */
+  --color-brand: #000000;
+  --color-brand-deep: #000000ce;
+  --color-brand-soft: #ccff0033;
+  --color-brand-line: #ccff00;
 
   /* Surfaces and text. */
   --color-canvas: #ffffff;
   --color-surface: #ffffff;
-  --color-surface-sunken: #f4f4f5;
-  --color-line: #e4e4e7;
-  --color-line-strong: #d4d4d8;
-  --color-ink-strong: #18181b;
-  --color-ink: #27272a;
-  --color-ink-muted: #52525b;
-  --color-ink-subtle: #71717a;
+  --color-surface-sunken: #f6f6f6;
+  --color-line: #0000001f;
+  --color-line-strong: #00000038;
+  --color-ink-strong: #000000;
+  --color-ink: #000000;
+  --color-ink-muted: #000000a8;
+  --color-ink-subtle: #00000090;
   --color-ink-inverse: #ffffff;
 
   /* Verification states. */
-  --color-verified: #15803d;
-  --color-verified-soft: #dcfce7;
-  --color-pending: #a16207;
-  --color-pending-soft: #fef9c3;
+  --color-verified: #000000;
+  --color-verified-soft: #ccff0033;
+  --color-pending: #000000b3;
+  --color-pending-soft: #00000008;
   --color-rejected: #b91c1c;
   --color-rejected-soft: #fee2e2;
   --color-critical: #b91c1c;
   --color-critical-soft: #fee2e2;
-  --color-neutral-soft: #e4e4e7;
+  --color-neutral-soft: #0000001f;
 
   /* Neutral accent surfaces, used by the demo disclosure banner. */
-  --color-accent-line: #5eead4;
-  --color-accent-soft: #ccfbf1;
+  --color-accent-line: #ccff00;
+  --color-accent-soft: #ccff0033;
 
-  --radius-card: 0.875rem;
+  --radius-card: 1.5rem;
   --shadow-panel: 0 1px 2px rgb(0 0 0 / 0.05), 0 1px 3px rgb(0 0 0 / 0.06);
+  --font-mono: "IBM Plex Mono", monospace;
+  --font-sans: "DM Sans", sans-serif;
   --text-2xs: 0.6875rem;
   --text-2xs--line-height: 1rem;
 }
@@ -58,8 +63,7 @@
   body {
     background-color: var(--color-canvas);
     color: var(--color-ink);
-    font-family:
-      ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-family: var(--body);
   }
 
   :focus-visible {

@@ -16,7 +16,7 @@ const STEPS = ["Property Details", "Documents", "Verification", "Offering"] as c
 
 export default function NewPropertyPage() {
   return (
-    <div className="mx-auto w-full max-w-3xl px-4 sm:px-5 py-8 sm:py-10">
+    <div className="ap-page owner-form-page mx-auto w-full max-w-3xl px-4 sm:px-5 py-8 sm:py-10">
       <header className="flex flex-col gap-2">
         <p className="ap-eyebrow">Owner · List a property</p>
         <h1 className="text-2xl font-semibold tracking-tight text-ink-strong sm:text-3xl">
