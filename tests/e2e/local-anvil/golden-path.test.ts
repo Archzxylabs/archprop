@@ -43,6 +43,12 @@ describe("Local Anvil Golden Path E2E", () => {
       expect(result.ok, "Golden path execution must succeed").toBe(true);
       expect(result.checksPassed, "All invariant checks must pass").toBe(result.totalChecks);
       expect(result.checksPassed, "Expected exactly 12 on-chain invariants").toBe(12);
+
+      // 4. Assert all economic balance deltas were observed and exact
+      expect(result.observedBalanceDeltas.length, "Expected at least 14 observed balance deltas").toBeGreaterThanOrEqual(14);
+      for (const d of result.observedBalanceDeltas) {
+        expect(d.delta, `Delta mismatch for ${d.label}`).toBe(d.expectedDelta);
+      }
     },
     300000,
   );
