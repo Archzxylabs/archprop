@@ -93,6 +93,38 @@ step with two confirmed transactions.
 **Why:** This preserves the PRD outcome while making the required “issuance
 readiness without agreement reverts” invariant directly testable and visible.
 
+## ADR-012 — Signed, receipt-verified property binding
+
+**Decision:** Add `POST /api/properties/:id/bind-chain` and the shared
+`BindPropertyChainRequest`/`buildPropertyBindingMessage` contract specified in
+`docs/INTERFACES.md`. A Supabase-authenticated draft owner must sign an EIP-191
+message binding their user ID and property UUID to the exact Arbitrum Sepolia
+`createAsset` transaction and expected external-ID-derived asset ID. The server
+verifies the receipt, registry emitter, event/current owner, chain ID, fresh
+signature, and conditional one-time DB update. It never performs a wallet write.
+
+**Why:** The frozen draft flow creates a DB UUID before on-chain `SUBMITTED`,
+but the original five-route API had no authenticated bridge between them.
+Receipt-only binding would let a signed-in user attach someone else's asset to
+their draft. The wallet signature proves control of the event owner while the
+JWT proves control of the off-chain draft. The database remains a cache, not a
+source of verification or economic authority.
+
+**Affected consumers:** Backend route/receipt tests and frontend owner
+registration flow consume the shared message builder. No Solidity ABI or
+existing HTTP response is changed. The new route is a deliberate additive
+exception to the earlier five-route baseline.
+
+**Migration/test plan:** Existing `properties.chain_asset_id` uniqueness and
+`status_cache` columns suffice; no new migration is required. Test wrong chain,
+reverted/wrong-emitter receipt, mismatched asset/owner/signature, stale message,
+foreign JWT owner, repeat/racing bind, and successful conditional update.
+Metadata content hashing remains a separately documented limitation: this
+binding authenticates the creator and nonzero on-chain metadata hash, but does
+not claim that the DB's descriptive fields were cryptographically committed.
+
+---
+
 ## Interface change process
 
 An agent must provide the proposed before/after signature, affected consumers,

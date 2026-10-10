@@ -74,6 +74,13 @@ export interface CreatePropertyRequest {
   tokenSupply: string; tokenPrice: string; economicRightsBps: number;
   description: string;
 }
+export interface BindPropertyChainRequest {
+  txHash: TxHash; chainAssetId: AssetId; issuedAtMs: string; signature: Hex;
+}
+export function buildPropertyBindingMessage(input: {
+  propertyId: string; userId: string; chainAssetId: AssetId;
+  txHash: TxHash; issuedAtMs: string;
+}): string;
 ```
 
 `status_cache` is presentation-only; contract reads take precedence for every
@@ -280,6 +287,7 @@ Routes are relative to `apps/web` and return JSON. Validation errors are
 | Route | Request | Success |
 | --- | --- | --- |
 | `POST /api/properties` | `CreatePropertyRequest`; signed-in owner context | `201 { property }` |
+| `POST /api/properties/:id/bind-chain` | `BindPropertyChainRequest`; signed-in owner context | `200 { property }` |
 | `GET /api/properties` | optional `status`, `q` | `200 { properties }` |
 | `GET /api/properties/:id` | property UUID or chain asset ID | `200 { property, documents, chainCache }` |
 | `POST /api/properties/:id/documents` | `multipart/form-data`: `file`, `documentType` | `201 { document: DocumentRecord }` |
@@ -287,6 +295,33 @@ Routes are relative to `apps/web` and return JSON. Validation errors are
 
 The document route accepts PDFs only, limits uploads to 10 MiB, calculates its
 own SHA-256, writes private storage, and never accepts a client-provided hash.
+The binding route records an already-confirmed `createAsset` transaction; it
+never broadcasts one. The URL `:id` is the draft property's UUID. The server
+requires its authenticated owner, `DRAFT`/unbound cache state, RPC chain ID
+`421614`, a successful receipt with `AssetCreated` emitted by the configured
+registry, and `chainAssetId == keccak256(UTF-8 externalId)`. The event's owner
+must equal the EIP-191 signer and the current registry asset owner; its nonzero
+metadata hash must match the current registry asset. Binding is permitted while
+the on-chain asset remains `SUBMITTED`. `issuedAtMs` is a canonical unsigned
+base-10 Unix-millisecond string no older than 10 minutes and no more than 60
+seconds in the future. The signature covers the exact no-trailing-newline text
+returned by `buildPropertyBindingMessage({ propertyId: id, userId: JWT user id,
+chainAssetId, txHash, issuedAtMs })`:
+
+```text
+ARCHPROP property-chain binding v1
+chainId:421614
+propertyId:<lowercase UUID>
+userId:<lowercase UUID>
+chainAssetId:<lowercase 0x-prefixed bytes32>
+txHash:<lowercase 0x-prefixed bytes32>
+issuedAtMs:<canonical decimal string>
+```
+
+After all checks, the server performs one conditional service-role update of
+`chain_asset_id` and `status_cache = 'SUBMITTED'`; zero affected rows or a
+uniqueness race returns `409`. The database remains presentation/cache only.
+No caller-supplied owner, metadata hash, status, or wallet address is trusted.
 Numeric JSON fields are canonical base-10 strings and are validated as unsigned
 integers before conversion to database numeric values. The revenue route checks
 a successful chain receipt and matching `RevenuePublished` event before

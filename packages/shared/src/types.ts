@@ -72,6 +72,33 @@ export interface CreatePropertyRequest {
   description: string;
 }
 
+/** Owner-authorized reference to an already-confirmed createAsset transaction. */
+export interface BindPropertyChainRequest {
+  txHash: TxHash;
+  chainAssetId: AssetId;
+  issuedAtMs: string;
+  signature: Hex;
+}
+
+/** Exact EIP-191 personal_sign message for the property/chain binding route. */
+export function buildPropertyBindingMessage(input: {
+  propertyId: string;
+  userId: string;
+  chainAssetId: AssetId;
+  txHash: TxHash;
+  issuedAtMs: string;
+}): string {
+  return [
+    "ARCHPROP property-chain binding v1",
+    `chainId:${CHAIN_ID}`,
+    `propertyId:${input.propertyId.toLowerCase()}`,
+    `userId:${input.userId.toLowerCase()}`,
+    `chainAssetId:${input.chainAssetId.toLowerCase()}`,
+    `txHash:${input.txHash.toLowerCase()}`,
+    `issuedAtMs:${input.issuedAtMs}`,
+  ].join("\n");
+}
+
 export const VILLA_NUSA = {
   id: "0x1756428cf9ce005285ddcf87c75240c798535bed95c6aeca6a5a7d3eb7b364ae" as AssetId,
   externalId: "ARCHPROP-001",
