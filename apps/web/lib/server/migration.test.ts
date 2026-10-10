@@ -371,6 +371,31 @@ describe("Migration DDL privilege regression tests (Static Schema Analysis)", ()
     });
   });
 
+  describe("Supabase-managed Storage RLS", () => {
+    it("does not ALTER Supabase-owned Storage tables", () => {
+      expect(sql).not.toMatch(/alter\s+table\s+(?:only\s+)?storage\s*\./i);
+    });
+
+    it("fails closed unless storage.objects already has RLS enabled", () => {
+      expect(sql).toMatch(
+        /if\s+not\s+exists\s*\(\s*select\s+1\s+from\s+pg_catalog\.pg_class\s+as\s+c\s+join\s+pg_catalog\.pg_namespace\s+as\s+n\s+on\s+n\.oid\s*=\s*c\.relnamespace\s+where\s+n\.nspname\s*=\s*'storage'\s+and\s+c\.relname\s*=\s*'objects'\s+and\s+c\.relrowsecurity\s*\)\s+then\s+raise\s+exception\s+'RLS must already be enabled on storage\.objects before applying ARCHPROP Storage policies\.';/i,
+      );
+    });
+
+    it.each([
+      "users",
+      "properties",
+      "property_documents",
+      "property_images",
+      "chain_transactions",
+      "revenue_epochs",
+    ])("still enables RLS on the application-owned %s table", (table) => {
+      expect(sql).toMatch(
+        new RegExp(`alter\\s+table\\s+public\\.${table}\\s+enable\\s+row\\s+level\\s+security;`, "i"),
+      );
+    });
+  });
+
   describe("Distinction between static and live integration tests", () => {
     it("reports verification mode clearly", () => {
       const liveDbConfigured = Boolean(

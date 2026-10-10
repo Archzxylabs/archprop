@@ -19,6 +19,10 @@ Corepack uses the existing root
 `packages/chain` and `packages/shared` outside the app directory when building
 and tracing server files.
 
+The workspace records build-script approvals for the pinned native dependencies
+in `pnpm-workspace.yaml`. Keep these approvals committed: pnpm rejects unreviewed
+dependency build scripts during the Vercel install step.
+
 The landing page `/` renders without RPC or Supabase credentials. To enable
 chain reads and backend features, configure the existing variables from
 `.env.example` in Vercel. `NEXT_PUBLIC_*` values must be present at build time;

@@ -492,7 +492,23 @@ on conflict (id) do update set
   file_size_limit     = excluded.file_size_limit,
   allowed_mime_types  = excluded.allowed_mime_types;
 
-alter table storage.objects enable row level security;
+-- Supabase owns storage.objects and enables RLS itself. Hosted migration roles
+-- can manage Storage policies but cannot ALTER this platform-owned table.
+-- Check the existing RLS setting without changing ownership or weakening access.
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_catalog.pg_class as c
+    join pg_catalog.pg_namespace as n on n.oid = c.relnamespace
+    where n.nspname = 'storage'
+      and c.relname = 'objects'
+      and c.relrowsecurity
+  ) then
+    raise exception 'RLS must already be enabled on storage.objects before applying ARCHPROP Storage policies.';
+  end if;
+end;
+$$;
 
 -- Extracts the leading property UUID from a server-generated storage path.
 -- Returns NULL (never raises) for anything else, so policies fail closed.

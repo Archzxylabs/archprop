@@ -3,3 +3,10 @@ packages:
   - packages/*
   - scripts
   - tests/*
+
+allowBuilds:
+  bufferutil@4.1.0: true
+  esbuild@0.25.12: true
+  keccak@3.0.4: true
+  unrs-resolver@1.12.2: true
+  utf-8-validate@5.0.10: true
