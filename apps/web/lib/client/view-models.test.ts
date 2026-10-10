@@ -12,13 +12,23 @@ import {
 import { buildMarketplaceCards } from "@/lib/client/listings";
 import {
   ARBITRUM_SEPOLIA_EXPLORER,
+  CANONICAL_VILLA_NUSA_PRESET,
+  calculateTokenAllocation,
   chainUnavailable,
   explorerAddressUrl,
   explorerTxUrl,
   formatBps,
   formatCompact,
   formatWholeUnits,
+  isCanonicalUnsignedDecimal,
+  isInvestmentAmountDivisible,
+  isPositiveSupplyAndPrice,
+  normalizeDecimalString,
+  parseCanonicalUnsignedDecimal,
   truncateHash,
+  validateCreatePropertyRequest,
+  validateInvestmentInput,
+  validateTargetSupplyPriceInvariant,
   type ChainDataState,
   type PropertyCardView,
 } from "@/lib/client/view-models";
@@ -342,3 +352,372 @@ describe("formatting helpers", () => {
     expect(truncateHash("0x1234")).toBe("0x1234");
   });
 });
+
+describe("normalizeDecimalString", () => {
+  it("strips commas, spaces, thin spaces, and underscores", () => {
+    expect(normalizeDecimalString("10,000,000,000")).toBe("10000000000");
+    expect(normalizeDecimalString("300 000")).toBe("300000");
+    expect(normalizeDecimalString(" 3 000 000 000 ")).toBe("3000000000");
+    expect(normalizeDecimalString("10_000")).toBe("10000");
+  });
+
+  it("leaves clean canonical digit strings intact", () => {
+    expect(normalizeDecimalString("10000000000")).toBe("10000000000");
+    expect(normalizeDecimalString("0")).toBe("0");
+  });
+});
+
+describe("isCanonicalUnsignedDecimal", () => {
+  it("accepts valid canonical unsigned base-10 strings", () => {
+    expect(isCanonicalUnsignedDecimal("0")).toBe(true);
+    expect(isCanonicalUnsignedDecimal("1")).toBe(true);
+    expect(isCanonicalUnsignedDecimal("10000")).toBe(true);
+    expect(isCanonicalUnsignedDecimal("300000")).toBe(true);
+    expect(isCanonicalUnsignedDecimal("3000000000")).toBe(true);
+    expect(isCanonicalUnsignedDecimal("10000000000")).toBe(true);
+  });
+
+  it("rejects leading zeros on multi-digit numbers", () => {
+    expect(isCanonicalUnsignedDecimal("01")).toBe(false);
+    expect(isCanonicalUnsignedDecimal("007")).toBe(false);
+    expect(isCanonicalUnsignedDecimal("00000")).toBe(false);
+  });
+
+  it("rejects negative numbers and signs", () => {
+    expect(isCanonicalUnsignedDecimal("-1")).toBe(false);
+    expect(isCanonicalUnsignedDecimal("-10000")).toBe(false);
+    expect(isCanonicalUnsignedDecimal("+10000")).toBe(false);
+  });
+
+  it("rejects decimals and fractions", () => {
+    expect(isCanonicalUnsignedDecimal("10.5")).toBe(false);
+    expect(isCanonicalUnsignedDecimal("10.0")).toBe(false);
+    expect(isCanonicalUnsignedDecimal(".5")).toBe(false);
+  });
+
+  it("rejects scientific notation and non-digits", () => {
+    expect(isCanonicalUnsignedDecimal("1e5")).toBe(false);
+    expect(isCanonicalUnsignedDecimal("1E5")).toBe(false);
+    expect(isCanonicalUnsignedDecimal("10k")).toBe(false);
+    expect(isCanonicalUnsignedDecimal("abc")).toBe(false);
+    expect(isCanonicalUnsignedDecimal("1,000")).toBe(false);
+    expect(isCanonicalUnsignedDecimal("")).toBe(false);
+    expect(isCanonicalUnsignedDecimal("   ")).toBe(false);
+  });
+});
+
+describe("parseCanonicalUnsignedDecimal", () => {
+  it("parses valid canonical strings to bigint", () => {
+    expect(parseCanonicalUnsignedDecimal("0")).toBe(0n);
+    expect(parseCanonicalUnsignedDecimal("10000")).toBe(10000n);
+    expect(parseCanonicalUnsignedDecimal("10000000000")).toBe(10_000_000_000n);
+  });
+
+  it("returns null for non-canonical strings", () => {
+    expect(parseCanonicalUnsignedDecimal("")).toBeNull();
+    expect(parseCanonicalUnsignedDecimal("01")).toBeNull();
+    expect(parseCanonicalUnsignedDecimal("-5")).toBeNull();
+    expect(parseCanonicalUnsignedDecimal("1.5")).toBeNull();
+    expect(parseCanonicalUnsignedDecimal("abc")).toBeNull();
+  });
+});
+
+describe("isPositiveSupplyAndPrice", () => {
+  it("accepts strictly positive supply and price", () => {
+    expect(isPositiveSupplyAndPrice(300_000n, 10_000n)).toBe(true);
+    expect(isPositiveSupplyAndPrice("300000", "10000")).toBe(true);
+    expect(isPositiveSupplyAndPrice("300,000", "10,000")).toBe(true);
+    expect(isPositiveSupplyAndPrice(300000, 10000)).toBe(true);
+  });
+
+  it("rejects zero or negative supply", () => {
+    expect(isPositiveSupplyAndPrice(0n, 10_000n)).toBe(false);
+    expect(isPositiveSupplyAndPrice("0", "10000")).toBe(false);
+    expect(isPositiveSupplyAndPrice(-10n, 10_000n)).toBe(false);
+  });
+
+  it("rejects zero or negative price", () => {
+    expect(isPositiveSupplyAndPrice(300_000n, 0n)).toBe(false);
+    expect(isPositiveSupplyAndPrice("300000", "0")).toBe(false);
+    expect(isPositiveSupplyAndPrice(300_000n, -100n)).toBe(false);
+  });
+
+  it("rejects malformed inputs", () => {
+    expect(isPositiveSupplyAndPrice("abc", "10000")).toBe(false);
+    expect(isPositiveSupplyAndPrice("300000", "xyz")).toBe(false);
+  });
+});
+
+describe("validateTargetSupplyPriceInvariant", () => {
+  it("preserves Villa Nusa canonical invariant (3,000,000,000 == 300,000 * 10,000)", () => {
+    expect(
+      validateTargetSupplyPriceInvariant(3_000_000_000n, 300_000n, 10_000n),
+    ).toBe(true);
+    expect(
+      validateTargetSupplyPriceInvariant("3000000000", "300000", "10000"),
+    ).toBe(true);
+    expect(
+      validateTargetSupplyPriceInvariant("3,000,000,000", "300,000", "10,000"),
+    ).toBe(true);
+  });
+
+  it("fails when target != supply * price", () => {
+    expect(
+      validateTargetSupplyPriceInvariant(3_000_000_000n, 300_000n, 12_000n),
+    ).toBe(false);
+    expect(
+      validateTargetSupplyPriceInvariant(2_000_000_000n, 300_000n, 10_000n),
+    ).toBe(false);
+  });
+
+  it("rejects zero or negative terms", () => {
+    expect(validateTargetSupplyPriceInvariant(0n, 0n, 0n)).toBe(false);
+    expect(validateTargetSupplyPriceInvariant(3_000_000_000n, 0n, 10_000n)).toBe(false);
+    expect(validateTargetSupplyPriceInvariant(-3_000_000_000n, 300_000n, -10_000n)).toBe(false);
+  });
+});
+
+describe("isInvestmentAmountDivisible", () => {
+  const tokenPrice = 10_000n;
+
+  it("accepts amounts that are whole multiples of token price", () => {
+    expect(isInvestmentAmountDivisible(10_000n, tokenPrice)).toBe(true);
+    expect(isInvestmentAmountDivisible(100_000n, tokenPrice)).toBe(true);
+    expect(isInvestmentAmountDivisible(1_000_000n, tokenPrice)).toBe(true);
+    expect(isInvestmentAmountDivisible(3_000_000_000n, tokenPrice)).toBe(true);
+    expect(isInvestmentAmountDivisible("1000000", "10000")).toBe(true);
+    expect(isInvestmentAmountDivisible("1,000,000", "10,000")).toBe(true);
+  });
+
+  it("rejects amounts not divisible by token price (fractional tokens)", () => {
+    expect(isInvestmentAmountDivisible(15_000n, tokenPrice)).toBe(false);
+    expect(isInvestmentAmountDivisible(1n, tokenPrice)).toBe(false);
+    expect(isInvestmentAmountDivisible(9_999n, tokenPrice)).toBe(false);
+    expect(isInvestmentAmountDivisible(10_001n, tokenPrice)).toBe(false);
+    expect(isInvestmentAmountDivisible("15000", "10000")).toBe(false);
+  });
+
+  it("rejects zero and negative investment amounts", () => {
+    expect(isInvestmentAmountDivisible(0n, tokenPrice)).toBe(false);
+    expect(isInvestmentAmountDivisible(-10_000n, tokenPrice)).toBe(false);
+    expect(isInvestmentAmountDivisible("0", "10000")).toBe(false);
+  });
+});
+
+describe("calculateTokenAllocation", () => {
+  const tokenPrice = 10_000n;
+
+  it("correctly maps 1,000,000 mIDR to 100 AVNUSA", () => {
+    expect(calculateTokenAllocation(1_000_000n, tokenPrice)).toBe(100n);
+    expect(calculateTokenAllocation("1000000", "10000")).toBe(100n);
+    expect(calculateTokenAllocation("1,000,000", "10,000")).toBe(100n);
+  });
+
+  it("correctly maps minimum whole token (10,000 mIDR -> 1 AVNUSA)", () => {
+    expect(calculateTokenAllocation(10_000n, tokenPrice)).toBe(1n);
+  });
+
+  it("correctly maps full offering target (3,000,000,000 mIDR -> 300,000 AVNUSA)", () => {
+    expect(calculateTokenAllocation(3_000_000_000n, tokenPrice)).toBe(300_000n);
+  });
+
+  it("returns null for non-divisible amounts", () => {
+    expect(calculateTokenAllocation(15_000n, tokenPrice)).toBeNull();
+    expect(calculateTokenAllocation(1_000_500n, tokenPrice)).toBeNull();
+  });
+
+  it("returns null for zero, negative, or invalid amounts", () => {
+    expect(calculateTokenAllocation(0n, tokenPrice)).toBeNull();
+    expect(calculateTokenAllocation(-1_000_000n, tokenPrice)).toBeNull();
+    expect(calculateTokenAllocation("abc", "10000")).toBeNull();
+  });
+});
+
+describe("validateInvestmentInput", () => {
+  const tokenPrice = 10_000n;
+
+  it("accepts valid canonical investment and returns calculated allocation", () => {
+    const result = validateInvestmentInput({
+      rawAmount: "1000000",
+      tokenPrice,
+    });
+    expect(result.isValid).toBe(true);
+    expect(result.amountBigInt).toBe(1_000_000n);
+    expect(result.allocationTokens).toBe(100n);
+    expect(result.errorMessage).toBeNull();
+    expect(result.errorCode).toBeNull();
+  });
+
+  it("accepts grouped input string (1,000,000)", () => {
+    const result = validateInvestmentInput({
+      rawAmount: "1,000,000",
+      tokenPrice,
+    });
+    expect(result.isValid).toBe(true);
+    expect(result.allocationTokens).toBe(100n);
+  });
+
+  it("rejects empty input without actionability", () => {
+    const result = validateInvestmentInput({
+      rawAmount: "",
+      tokenPrice,
+    });
+    expect(result.isValid).toBe(false);
+    expect(result.errorCode).toBe("EMPTY");
+    expect(result.allocationTokens).toBeNull();
+  });
+
+  it("rejects zero input", () => {
+    const result = validateInvestmentInput({
+      rawAmount: "0",
+      tokenPrice,
+    });
+    expect(result.isValid).toBe(false);
+    expect(result.errorCode).toBe("ZERO");
+    expect(result.allocationTokens).toBeNull();
+  });
+
+  it("rejects negative input", () => {
+    const result = validateInvestmentInput({
+      rawAmount: "-1000000",
+      tokenPrice,
+    });
+    expect(result.isValid).toBe(false);
+    expect(result.errorCode).toBe("NEGATIVE");
+    expect(result.allocationTokens).toBeNull();
+  });
+
+  it("rejects fractional decimal inputs", () => {
+    const result = validateInvestmentInput({
+      rawAmount: "1000.50",
+      tokenPrice,
+    });
+    expect(result.isValid).toBe(false);
+    expect(result.errorCode).toBe("FRACTIONAL");
+    expect(result.allocationTokens).toBeNull();
+    expect(result.errorMessage).toContain("0 decimals");
+  });
+
+  it("rejects malformed text inputs", () => {
+    const result = validateInvestmentInput({
+      rawAmount: "1M",
+      tokenPrice,
+    });
+    expect(result.isValid).toBe(false);
+    expect(result.errorCode).toBe("MALFORMED");
+    expect(result.allocationTokens).toBeNull();
+  });
+
+  it("rejects amounts not divisible by token price (fractional tokens)", () => {
+    const result = validateInvestmentInput({
+      rawAmount: "15000",
+      tokenPrice,
+    });
+    expect(result.isValid).toBe(false);
+    expect(result.errorCode).toBe("NOT_DIVISIBLE");
+    expect(result.allocationTokens).toBeNull();
+    expect(result.errorMessage).toContain("whole multiple");
+  });
+
+  it("rejects amounts exceeding remaining offering cap", () => {
+    const result = validateInvestmentInput({
+      rawAmount: "1000000",
+      tokenPrice,
+      remainingCap: 500_000n,
+    });
+    expect(result.isValid).toBe(false);
+    expect(result.errorCode).toBe("OVER_CAP");
+    expect(result.allocationTokens).toBeNull();
+    expect(result.errorMessage).toContain("exceeds remaining");
+  });
+});
+
+describe("CANONICAL_VILLA_NUSA_PRESET and CreatePropertyRequest validation", () => {
+  it("represents every frozen CreatePropertyRequest field with exact canonical values", () => {
+    expect(CANONICAL_VILLA_NUSA_PRESET.externalId).toBe("ARCHPROP-001");
+    expect(CANONICAL_VILLA_NUSA_PRESET.name).toBe("Villa Nusa");
+    expect(CANONICAL_VILLA_NUSA_PRESET.location).toBe("Bali");
+    expect(CANONICAL_VILLA_NUSA_PRESET.propertyType).toBe("Villa");
+    expect(CANONICAL_VILLA_NUSA_PRESET.issuerName).toBe("PT Nusa Properties");
+    expect(CANONICAL_VILLA_NUSA_PRESET.indicativeValue).toBe("10000000000");
+    expect(CANONICAL_VILLA_NUSA_PRESET.offeringTarget).toBe("3000000000");
+    expect(CANONICAL_VILLA_NUSA_PRESET.tokenSupply).toBe("300000");
+    expect(CANONICAL_VILLA_NUSA_PRESET.tokenPrice).toBe("10000");
+    expect(CANONICAL_VILLA_NUSA_PRESET.economicRightsBps).toBe(3000);
+    expect(CANONICAL_VILLA_NUSA_PRESET.description).toBeTruthy();
+  });
+
+  it("validates that CANONICAL_VILLA_NUSA_PRESET is completely valid", () => {
+    const validation = validateCreatePropertyRequest(CANONICAL_VILLA_NUSA_PRESET);
+    expect(validation.isValid).toBe(true);
+    expect(validation.errors).toEqual({});
+  });
+
+  it("preserves target == supply * price invariant for Villa Nusa preset", () => {
+    const supply = BigInt(CANONICAL_VILLA_NUSA_PRESET.tokenSupply);
+    const price = BigInt(CANONICAL_VILLA_NUSA_PRESET.tokenPrice);
+    const target = BigInt(CANONICAL_VILLA_NUSA_PRESET.offeringTarget);
+    expect(supply * price).toBe(target);
+  });
+
+  it("detects missing required fields", () => {
+    const validation = validateCreatePropertyRequest({
+      ...CANONICAL_VILLA_NUSA_PRESET,
+      externalId: "",
+      name: "",
+      location: "",
+      propertyType: "",
+      issuerName: "",
+      description: "",
+    });
+    expect(validation.isValid).toBe(false);
+    expect(validation.errors.externalId).toBeTruthy();
+    expect(validation.errors.name).toBeTruthy();
+    expect(validation.errors.location).toBeTruthy();
+    expect(validation.errors.propertyType).toBeTruthy();
+    expect(validation.errors.issuerName).toBeTruthy();
+    expect(validation.errors.description).toBeTruthy();
+  });
+
+  it("detects non-canonical numeric inputs", () => {
+    const validation = validateCreatePropertyRequest({
+      ...CANONICAL_VILLA_NUSA_PRESET,
+      indicativeValue: "0",
+      offeringTarget: "-3000000000",
+      tokenSupply: "300.5",
+      tokenPrice: "abc",
+    });
+    expect(validation.isValid).toBe(false);
+    expect(validation.errors.indicativeValue).toBeTruthy();
+    expect(validation.errors.offeringTarget).toBeTruthy();
+    expect(validation.errors.tokenSupply).toBeTruthy();
+    expect(validation.errors.tokenPrice).toBeTruthy();
+  });
+
+  it("detects target != supply * price invariant violations", () => {
+    const validation = validateCreatePropertyRequest({
+      ...CANONICAL_VILLA_NUSA_PRESET,
+      offeringTarget: "4000000000", // Mismatches 300,000 * 10,000 = 3,000,000,000
+    });
+    expect(validation.isValid).toBe(false);
+    expect(validation.errors.invariant).toBeTruthy();
+    expect(validation.errors.invariant).toContain("must equal token supply × token price");
+  });
+
+  it("detects invalid economic rights basis points", () => {
+    const tooHigh = validateCreatePropertyRequest({
+      ...CANONICAL_VILLA_NUSA_PRESET,
+      economicRightsBps: 15_000,
+    });
+    expect(tooHigh.isValid).toBe(false);
+    expect(tooHigh.errors.economicRightsBps).toBeTruthy();
+
+    const zero = validateCreatePropertyRequest({
+      ...CANONICAL_VILLA_NUSA_PRESET,
+      economicRightsBps: 0,
+    });
+    expect(zero.isValid).toBe(false);
+    expect(zero.errors.economicRightsBps).toBeTruthy();
+  });
+});
+

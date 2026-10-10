@@ -12,6 +12,7 @@ import {
   WrongNetworkNotice,
 } from "@/components/chain-state";
 import { StatusBadge } from "@/components/status-badge";
+import { InvestmentPanel } from "@/components/investment-panel";
 import { findListing, findListingByAssetId } from "@/lib/client/listings";
 import {
   EXPECTED_CHAIN_ID,
@@ -242,6 +243,17 @@ export default async function PropertyPage({ params }: PageProps) {
             }}
           </ChainValue>
         </div>
+
+        {listing.fundamentals ? (
+          <div className="mt-6">
+            <InvestmentPanel
+              tokenPrice={listing.fundamentals.tokenPrice}
+              tokenSymbol={listing.fundamentals.tokenSymbol}
+              offeringTarget={listing.fundamentals.offeringTarget}
+              chainState={offeringState}
+            />
+          </div>
+        ) : null}
       </section>
 
       {/* 5. On-chain proof */}
