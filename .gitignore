@@ -15,3 +15,4 @@ env/
 *.key
 *.pem
 *.secret
+*.tsbuildinfo
