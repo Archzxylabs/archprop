@@ -194,6 +194,35 @@ the exact mismatch revert, zero short-payment, no state consumption, and
 preserved funds. Keep all canonical MockIDR success paths and the full Foundry
 suite green; no shared-chain deployment.
 
+## ADR-016 — Verifiers discover evidence metadata through a signed, role-gated index
+
+**Decision:** Add `POST /api/properties/:id/documents/discover`,
+`VerifierEvidenceIndexRequest`, and `buildVerifierEvidenceIndexMessage` as
+specified in `docs/INTERFACES.md`. A Supabase-authenticated requester signs a
+fresh EIP-191 message scoped to the property, bound chain asset, requested
+verifier role, and JWT user ID. The server checks live Arbitrum Sepolia chain
+ID, registry `UNDER_VERIFICATION` status, non-owner signer, and the matching
+on-chain verifier role before returning only role-appropriate document IDs,
+types, SHA-256 hashes, and demo flags. File paths, bytes, and URLs remain
+private; obtaining a signed file URL still requires the separate per-document
+access request from ADR-014.
+
+**Why:** The public property detail API deliberately gives non-owners
+`documents: []`, while ADR-014's per-document access route requires a
+`documentId`. Without a secure discovery path, a verifier cannot use the
+portal to identify the evidence it needs to attest. Making all document
+metadata public or asking owners to manually share UUIDs would bypass the
+intended private-evidence workflow.
+
+**Affected consumers:** Backend discovery route and security tests; verifier
+UI consumes the response after its wallet integration is accepted. No existing
+HTTP route, Solidity ABI, RLS grant, or database schema changes.
+
+**Test plan:** Reject missing/invalid JWT, malformed/stale signature, wrong
+chain, unbound/non-`UNDER_VERIFICATION` asset, owner self-access, wrong role,
+and cross-property leakage. Assert legal/valuation filtering, no forbidden
+agreement document, no path/URL exposure, and `Cache-Control: no-store`.
+
 ---
 
 ## Interface change process

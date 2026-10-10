@@ -87,6 +87,13 @@ export interface VerifierEvidenceAccessRequest {
   signature: Hex;
 }
 
+/** Wallet-signed discovery of role-appropriate evidence metadata; never file URLs. */
+export interface VerifierEvidenceIndexRequest {
+  role: "LEGAL" | "VALUATION";
+  issuedAtMs: string;
+  signature: Hex;
+}
+
 /** Exact EIP-191 personal_sign message for the property/chain binding route. */
 export function buildPropertyBindingMessage(input: {
   propertyId: string;
@@ -120,6 +127,25 @@ export function buildVerifierEvidenceAccessMessage(input: {
     `chainId:${CHAIN_ID}`,
     `propertyId:${input.propertyId.toLowerCase()}`,
     `documentId:${input.documentId.toLowerCase()}`,
+    `assetId:${input.assetId.toLowerCase()}`,
+    `role:${input.role}`,
+    `userId:${input.userId.toLowerCase()}`,
+    `issuedAtMs:${input.issuedAtMs}`,
+  ].join("\n");
+}
+
+/** Exact EIP-191 personal_sign message for verifier evidence discovery. */
+export function buildVerifierEvidenceIndexMessage(input: {
+  propertyId: string;
+  assetId: AssetId;
+  role: VerifierEvidenceIndexRequest["role"];
+  userId: string;
+  issuedAtMs: string;
+}): string {
+  return [
+    "ARCHPROP verifier-evidence index v1",
+    `chainId:${CHAIN_ID}`,
+    `propertyId:${input.propertyId.toLowerCase()}`,
     `assetId:${input.assetId.toLowerCase()}`,
     `role:${input.role}`,
     `userId:${input.userId.toLowerCase()}`,

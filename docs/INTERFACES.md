@@ -80,6 +80,9 @@ export interface BindPropertyChainRequest {
 export interface VerifierEvidenceAccessRequest {
   role: "LEGAL" | "VALUATION"; issuedAtMs: string; signature: Hex;
 }
+export interface VerifierEvidenceIndexRequest {
+  role: "LEGAL" | "VALUATION"; issuedAtMs: string; signature: Hex;
+}
 export function buildPropertyBindingMessage(input: {
   propertyId: string; userId: string; chainAssetId: AssetId;
   txHash: TxHash; issuedAtMs: string;
@@ -87,6 +90,11 @@ export function buildPropertyBindingMessage(input: {
 export function buildVerifierEvidenceAccessMessage(input: {
   propertyId: string; documentId: string; assetId: AssetId;
   role: VerifierEvidenceAccessRequest["role"];
+  userId: string; issuedAtMs: string;
+}): string;
+export function buildVerifierEvidenceIndexMessage(input: {
+  propertyId: string; assetId: AssetId;
+  role: VerifierEvidenceIndexRequest["role"];
   userId: string; issuedAtMs: string;
 }): string;
 ```
@@ -309,11 +317,37 @@ Routes are relative to `apps/web` and return JSON. Validation errors are
 | `GET /api/properties` | optional `status`, `q` | `200 { properties }` |
 | `GET /api/properties/:id` | property UUID or chain asset ID | `200 { property, documents, chainCache }` |
 | `POST /api/properties/:id/documents` | `multipart/form-data`: `file`, `documentType` | `201 { document: DocumentRecord }` |
+| `POST /api/properties/:id/documents/discover` | `VerifierEvidenceIndexRequest`; signed-in verifier context | `200 { documents: { id, documentType, sha256, isDemo: true }[] }` |
 | `POST /api/properties/:id/documents/:documentId/access` | `VerifierEvidenceAccessRequest`; signed-in verifier context | `200 { url, expiresIn: 60, document: { id, documentType, sha256, isDemo: true } }` |
 | `POST /api/demo/revenue` | `{ assetId, period, amount, evidenceHash, txHash }` | `201 { revenueEpoch }` |
 
 The document route accepts PDFs only, limits uploads to 10 MiB, calculates its
 own SHA-256, writes private storage, and never accepts a client-provided hash.
+The verifier evidence-discovery route exists because public property reads do
+not expose owner-private document IDs. It requires the same JWT, UUID property
+ID, bound chain asset, RPC chain ID `421614`, current `UNDER_VERIFICATION`
+status, non-owner EIP-191 signer, and live role checks as the individual access
+route. It returns only role-appropriate `id`, `documentType`, `sha256`, and
+`isDemo: true` for documents belonging to that property: `LEGAL` sees
+`LAND_RIGHT` and `BUILDING_PERMIT`; `VALUATION` sees `APPRAISAL`. It never
+returns a storage path, permanent/public URL, signed URL, PDF bytes, or an
+`ECONOMIC_RIGHTS_AGREEMENT` document. `Cache-Control: no-store` applies to
+success and authorization-sensitive errors. `issuedAtMs` has the same canonical
+decimal and [-10 minutes, +60 seconds] freshness rule as the access route.
+Its signature covers the exact no-trailing-newline text returned by
+`buildVerifierEvidenceIndexMessage({ propertyId: id, assetId,
+role, userId: JWT user id, issuedAtMs })`:
+
+```text
+ARCHPROP verifier-evidence index v1
+chainId:421614
+propertyId:<lowercase UUID>
+assetId:<lowercase 0x-prefixed bytes32>
+role:<LEGAL|VALUATION>
+userId:<lowercase UUID>
+issuedAtMs:<canonical decimal string>
+```
+
 The verifier evidence-access route returns a 60-second Supabase signed URL for
 one private PDF. It requires a valid Supabase JWT, UUID property/document IDs,
 an existing document belonging to that property, a non-null bound chain asset,
