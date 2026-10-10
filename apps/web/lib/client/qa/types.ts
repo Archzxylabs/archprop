@@ -25,13 +25,27 @@ export interface ViewportResult {
   details?: string | undefined;
 }
 
-export interface KeyboardInteractiveElement {
+export interface ActiveElementFocusInfo {
   tag: string;
   id: string;
-  name?: string | undefined;
-  type?: string | undefined;
-  disabled: boolean;
-  hasVisibleFocus?: boolean | undefined;
+  text?: string | undefined;
+  disabled?: boolean | undefined;
+  outlineStyle?: string | undefined;
+  outlineWidth?: string | undefined;
+  boxShadow?: string | undefined;
+  borderColor?: string | undefined;
+  hasObservableFocus?: boolean | undefined;
+}
+
+export interface TabStepResult {
+  step: number;
+  expectedControl: string;
+  actualId: string;
+  actualText: string;
+  actualTag: string;
+  matchesExpected: boolean;
+  hasObservableFocus: boolean;
+  failureReason?: string | undefined;
 }
 
 export interface AriaAssociationCheck {
@@ -57,12 +71,12 @@ export interface PresetChipCheck {
 export interface RouteAccessibilityResult {
   route: string;
   status: "PASS" | "FAIL";
-  tabOrderValid: boolean;
+  tabSequenceValid: boolean;
   visibleFocusValid: boolean;
   ariaAssociationsValid: boolean;
   disabledActionValid: boolean;
   presetChipsValid?: boolean | undefined;
-  interactiveElements: KeyboardInteractiveElement[];
+  tabSteps: TabStepResult[];
   ariaChecks: AriaAssociationCheck[];
   actionChecks: ActionButtonCheck[];
   presetChecks?: PresetChipCheck[] | undefined;

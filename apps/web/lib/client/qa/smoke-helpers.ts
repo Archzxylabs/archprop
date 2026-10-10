@@ -1,7 +1,9 @@
 import type {
+  ActiveElementFocusInfo,
   CliOptions,
   PresetChipCheck,
   SmokeSummary,
+  TabStepResult,
   ViewportConfig,
 } from "./types";
 
@@ -18,7 +20,7 @@ export const TARGET_ROUTES = [
   "/property/ARCHPROP-001",
 ] as const;
 
-export const EXPECTED_OWNER_FORM_ORDER = [
+export const EXPECTED_OWNER_FORM_ENABLED_TAB_SEQUENCE = [
   "Reset to Villa Nusa preset",
   "externalId",
   "name",
@@ -31,15 +33,13 @@ export const EXPECTED_OWNER_FORM_ORDER = [
   "economicRightsBps",
   "tokenSupply",
   "tokenPrice",
-  "Register property",
 ] as const;
 
-export const EXPECTED_INVESTMENT_PANEL_ORDER = [
+export const EXPECTED_INVESTMENT_PANEL_ENABLED_TAB_SEQUENCE = [
   "investment-amount",
   "1M mIDR (100 tokens)",
   "5M mIDR (500 tokens)",
   "10M mIDR (1,000 tokens)",
-  "Invest in AVNUSA",
 ] as const;
 
 export const OWNER_REGISTRATION_PREREQUISITE =
@@ -109,7 +109,6 @@ export function parseCliArgs(
     }
   }
 
-  // Normalize base URL trailing slash
   if (baseUrl.endsWith("/")) {
     baseUrl = baseUrl.slice(0, -1);
   }
@@ -124,11 +123,45 @@ export function parseCliArgs(
 }
 
 export function evaluateViewportLayout(params: {
-  innerWidth: number;
-  scrollWidth: number;
-  clippedControls: string[];
+  innerWidth: unknown;
+  scrollWidth: unknown;
+  clippedControls: unknown;
 }): { status: "PASS" | "FAIL"; hasHorizontalOverflow: boolean; details: string } {
   const { innerWidth, scrollWidth, clippedControls } = params;
+
+  // Fail-closed validation for missing, null, or non-finite evaluations
+  if (
+    typeof innerWidth !== "number" ||
+    !Number.isFinite(innerWidth) ||
+    innerWidth <= 0
+  ) {
+    return {
+      status: "FAIL",
+      hasHorizontalOverflow: false,
+      details: `Non-finite or invalid innerWidth received from browser: ${String(innerWidth)}`,
+    };
+  }
+
+  if (
+    typeof scrollWidth !== "number" ||
+    !Number.isFinite(scrollWidth) ||
+    scrollWidth <= 0
+  ) {
+    return {
+      status: "FAIL",
+      hasHorizontalOverflow: false,
+      details: `Non-finite or invalid document scrollWidth received from browser: ${String(scrollWidth)}`,
+    };
+  }
+
+  if (!Array.isArray(clippedControls)) {
+    return {
+      status: "FAIL",
+      hasHorizontalOverflow: false,
+      details: "Invalid clippedControls received from browser (expected array)",
+    };
+  }
+
   // Permit 1px subpixel rounding tolerance
   const hasHorizontalOverflow = scrollWidth > innerWidth + 1;
   const isClipped = clippedControls.length > 0;
@@ -158,30 +191,78 @@ export function evaluateViewportLayout(params: {
   };
 }
 
-export function validateTabOrder(
-  expectedSequence: readonly string[],
-  actualElements: readonly { id: string }[]
-): { valid: boolean; failures: string[] } {
-  const actualIds = actualElements.map((el) => el.id);
-  const failures: string[] = [];
+export function hasObservableFocusStyling(computed: {
+  outlineStyle?: string | undefined;
+  outlineWidth?: string | undefined;
+  boxShadow?: string | undefined;
+  borderColor?: string | undefined;
+}): { hasObservableFocus: boolean; details: string } {
+  const hasOutline =
+    computed.outlineStyle !== undefined &&
+    computed.outlineStyle !== "none" &&
+    parseFloat(computed.outlineWidth || "0") > 0;
 
-  let lastIndex = -1;
-  for (const expectedId of expectedSequence) {
-    const foundIndex = actualIds.indexOf(expectedId);
-    if (foundIndex === -1) {
-      failures.push(`Missing expected interactive element: "${expectedId}"`);
-    } else if (foundIndex < lastIndex) {
-      failures.push(
-        `Element "${expectedId}" at position ${foundIndex} appeared out of expected sequential order (previous was at index ${lastIndex})`
-      );
-    } else {
-      lastIndex = foundIndex;
-    }
+  // Focus ring via box-shadow (e.g. Tailwind ring-2)
+  const hasRingOrShadow =
+    computed.boxShadow !== undefined &&
+    computed.boxShadow !== "none" &&
+    computed.boxShadow.trim().length > 0 &&
+    !computed.boxShadow.startsWith("none");
+
+  // Focus brand border color
+  const hasBrandBorder =
+    computed.borderColor !== undefined &&
+    (computed.borderColor.includes("15, 118, 110") ||
+      computed.borderColor.includes("35, 107, 104") ||
+      computed.borderColor.includes("35, 53, 54"));
+
+  const hasObservableFocus = hasOutline || hasRingOrShadow || hasBrandBorder;
+
+  const styleParts: string[] = [];
+  if (hasOutline) styleParts.push(`outline: ${computed.outlineStyle} ${computed.outlineWidth}`);
+  if (hasRingOrShadow) styleParts.push("focus-ring/boxShadow");
+  if (hasBrandBorder) styleParts.push(`focus-borderColor: ${computed.borderColor}`);
+
+  const details =
+    styleParts.length > 0
+      ? styleParts.join(", ")
+      : "no observable computed outline, ring, or brand border";
+
+  return {
+    hasObservableFocus,
+    details,
+  };
+}
+
+export function evaluateTabStep(
+  expectedControl: string,
+  activeElement: ActiveElementFocusInfo,
+  stepIndex: number
+): TabStepResult {
+  const matches =
+    activeElement.id === expectedControl ||
+    (activeElement.text !== undefined && activeElement.text.includes(expectedControl));
+
+  const focusCheck = hasObservableFocusStyling(activeElement);
+
+  let failureReason: string | undefined;
+  if (!matches) {
+    failureReason = `Expected focus on "${expectedControl}", but document.activeElement was "${activeElement.id || activeElement.text || activeElement.tag}"`;
+  } else if (activeElement.disabled) {
+    failureReason = `Control "${expectedControl}" received tab focus while marked disabled!`;
+  } else if (!focusCheck.hasObservableFocus) {
+    failureReason = `Control "${expectedControl}" focused but lacks observable focus styling (${focusCheck.details})`;
   }
 
   return {
-    valid: failures.length === 0,
-    failures,
+    step: stepIndex,
+    expectedControl,
+    actualId: activeElement.id,
+    actualText: activeElement.text || "",
+    actualTag: activeElement.tag,
+    matchesExpected: matches && !activeElement.disabled,
+    hasObservableFocus: focusCheck.hasObservableFocus,
+    failureReason,
   };
 }
 
@@ -304,16 +385,25 @@ export function formatSmokeReport(summary: SmokeSummary): string {
   }
 
   if (summary.routeAccessibilityResults.length > 0) {
-    lines.push("KEYBOARD & ACCESSIBILITY CHECKS:");
+    lines.push("KEYBOARD & ACCESSIBILITY CHECKS (CDP DRIVEN TAB SEQUENCE):");
     for (const ar of summary.routeAccessibilityResults) {
       const tag = ar.status === "PASS" ? "[PASS]" : "[FAIL]";
       lines.push(`  ${tag.padEnd(7)} Route: ${ar.route}`);
-      lines.push(`          Tab order:      ${ar.tabOrderValid ? "PASS" : "FAIL"}`);
+      lines.push(`          Tab sequence:   ${ar.tabSequenceValid ? "PASS" : "FAIL"}`);
       lines.push(`          Visible focus:  ${ar.visibleFocusValid ? "PASS" : "FAIL"}`);
       lines.push(`          ARIA relations: ${ar.ariaAssociationsValid ? "PASS" : "FAIL"}`);
       lines.push(`          Disabled locks: ${ar.disabledActionValid ? "PASS" : "FAIL"}`);
       if (ar.presetChipsValid !== undefined) {
         lines.push(`          Preset chips:   ${ar.presetChipsValid ? "PASS" : "FAIL"}`);
+      }
+      if (ar.tabSteps.length > 0) {
+        lines.push("          Observed Tab Steps:");
+        for (const ts of ar.tabSteps) {
+          const stepTag = ts.matchesExpected && ts.hasObservableFocus ? "✓" : "✗";
+          lines.push(
+            `            ${stepTag} Step ${ts.step}: ${ts.expectedControl.padEnd(28)} -> focused: ${ts.actualId || ts.actualText || ts.actualTag}`
+          );
+        }
       }
       if (ar.failures.length > 0) {
         for (const failure of ar.failures) {

@@ -1,13 +1,18 @@
 import { describe, expect, it } from "vitest";
 import {
+  evaluateTabStep,
   evaluateViewportLayout,
+  EXPECTED_INVESTMENT_PANEL_ENABLED_TAB_SEQUENCE,
+  EXPECTED_OWNER_FORM_ENABLED_TAB_SEQUENCE,
   formatSmokeReport,
+  hasObservableFocusStyling,
+  INVESTMENT_PREREQUISITE,
+  OWNER_REGISTRATION_PREREQUISITE,
   parseCliArgs,
   STANDARD_VIEWPORTS,
   validateActionPrerequisite,
   validateAriaDescribedByTargets,
   validatePresetChips,
-  validateTabOrder,
 } from "./smoke-helpers";
 import type { SmokeSummary } from "./types";
 
@@ -80,7 +85,69 @@ describe("smoke-helpers", () => {
     });
   });
 
-  describe("evaluateViewportLayout", () => {
+  describe("evaluateViewportLayout (fail-closed behavior)", () => {
+    it("fails when innerWidth is undefined, null, NaN, or non-finite", () => {
+      expect(
+        evaluateViewportLayout({
+          innerWidth: undefined,
+          scrollWidth: 320,
+          clippedControls: [],
+        }).status
+      ).toBe("FAIL");
+
+      expect(
+        evaluateViewportLayout({
+          innerWidth: Number.NaN,
+          scrollWidth: 320,
+          clippedControls: [],
+        }).status
+      ).toBe("FAIL");
+
+      expect(
+        evaluateViewportLayout({
+          innerWidth: 0,
+          scrollWidth: 320,
+          clippedControls: [],
+        }).status
+      ).toBe("FAIL");
+    });
+
+    it("fails when scrollWidth is undefined, null, NaN, or non-finite", () => {
+      expect(
+        evaluateViewportLayout({
+          innerWidth: 320,
+          scrollWidth: undefined,
+          clippedControls: [],
+        }).status
+      ).toBe("FAIL");
+
+      expect(
+        evaluateViewportLayout({
+          innerWidth: 320,
+          scrollWidth: null,
+          clippedControls: [],
+        }).status
+      ).toBe("FAIL");
+
+      expect(
+        evaluateViewportLayout({
+          innerWidth: 320,
+          scrollWidth: 0,
+          clippedControls: [],
+        }).status
+      ).toBe("FAIL");
+    });
+
+    it("fails when clippedControls is not an array", () => {
+      expect(
+        evaluateViewportLayout({
+          innerWidth: 320,
+          scrollWidth: 320,
+          clippedControls: null,
+        }).status
+      ).toBe("FAIL");
+    });
+
     it("passes when docWidth <= winWidth and no controls are clipped", () => {
       const result = evaluateViewportLayout({
         innerWidth: 320,
@@ -125,55 +192,151 @@ describe("smoke-helpers", () => {
     });
   });
 
-  describe("validateTabOrder", () => {
-    const sequence = ["btn-reset", "input-1", "input-2", "btn-submit"];
-
-    it("passes when elements appear in sequential order", () => {
-      const actual = [
-        { id: "btn-reset" },
-        { id: "input-1" },
-        { id: "input-2" },
-        { id: "btn-submit" },
-      ];
-      const result = validateTabOrder(sequence, actual);
-      expect(result.valid).toBe(true);
-      expect(result.failures).toHaveLength(0);
+  describe("hasObservableFocusStyling", () => {
+    it("recognizes visible outline styling", () => {
+      const check = hasObservableFocusStyling({
+        outlineStyle: "solid",
+        outlineWidth: "2px",
+      });
+      expect(check.hasObservableFocus).toBe(true);
+      expect(check.details).toContain("outline: solid 2px");
     });
 
-    it("passes when intermediate non-essential elements exist but sequence is respected", () => {
-      const actual = [
-        { id: "header-link" },
-        { id: "btn-reset" },
-        { id: "some-helper" },
-        { id: "input-1" },
-        { id: "input-2" },
-        { id: "btn-submit" },
-      ];
-      const result = validateTabOrder(sequence, actual);
-      expect(result.valid).toBe(true);
+    it("recognizes visible focus-ring or box-shadow", () => {
+      const check = hasObservableFocusStyling({
+        outlineStyle: "none",
+        outlineWidth: "0px",
+        boxShadow: "rgba(0, 0, 0, 0) 0px 0px 0px 0px, oklab(...) 0px 0px 0px 2px",
+      });
+      expect(check.hasObservableFocus).toBe(true);
+      expect(check.details).toContain("focus-ring/boxShadow");
     });
 
-    it("fails when an expected element is missing", () => {
-      const actual = [
-        { id: "btn-reset" },
-        { id: "input-1" },
-        { id: "btn-submit" },
-      ];
-      const result = validateTabOrder(sequence, actual);
-      expect(result.valid).toBe(false);
-      expect(result.failures[0]).toContain('Missing expected interactive element: "input-2"');
+    it("recognizes brand focus border color", () => {
+      const check = hasObservableFocusStyling({
+        outlineStyle: "none",
+        outlineWidth: "0px",
+        boxShadow: "none",
+        borderColor: "rgb(15, 118, 110)",
+      });
+      expect(check.hasObservableFocus).toBe(true);
+      expect(check.details).toContain("focus-borderColor");
     });
 
-    it("fails when elements appear out of order", () => {
-      const actual = [
-        { id: "btn-reset" },
-        { id: "input-2" },
-        { id: "input-1" },
-        { id: "btn-submit" },
-      ];
-      const result = validateTabOrder(sequence, actual);
-      expect(result.valid).toBe(false);
-      expect(result.failures[0]).toContain("appeared out of expected sequential order");
+    it("rejects when no observable focus styling is present", () => {
+      const check = hasObservableFocusStyling({
+        outlineStyle: "none",
+        outlineWidth: "0px",
+        boxShadow: "none",
+        borderColor: "rgb(212, 212, 216)",
+      });
+      expect(check.hasObservableFocus).toBe(false);
+      expect(check.details).toContain("no observable computed outline");
+    });
+  });
+
+  describe("evaluateTabStep", () => {
+    it("passes when active element matches expected and has focus styling", () => {
+      const step = evaluateTabStep(
+        "externalId",
+        {
+          tag: "INPUT",
+          id: "externalId",
+          disabled: false,
+          outlineStyle: "none",
+          outlineWidth: "2px",
+          boxShadow: "oklab(...) 0px 0px 0px 2px",
+          borderColor: "rgb(15, 118, 110)",
+        },
+        1
+      );
+      expect(step.matchesExpected).toBe(true);
+      expect(step.hasObservableFocus).toBe(true);
+      expect(step.failureReason).toBeUndefined();
+    });
+
+    it("matches button by text label", () => {
+      const step = evaluateTabStep(
+        "Reset to Villa Nusa preset",
+        {
+          tag: "BUTTON",
+          id: "",
+          text: "Reset to Villa Nusa preset",
+          disabled: false,
+          outlineStyle: "solid",
+          outlineWidth: "2px",
+        },
+        1
+      );
+      expect(step.matchesExpected).toBe(true);
+      expect(step.hasObservableFocus).toBe(true);
+    });
+
+    it("fails when focused element does not match expected", () => {
+      const step = evaluateTabStep(
+        "externalId",
+        {
+          tag: "INPUT",
+          id: "wrongField",
+          disabled: false,
+          outlineStyle: "solid",
+          outlineWidth: "2px",
+        },
+        2
+      );
+      expect(step.matchesExpected).toBe(false);
+      expect(step.failureReason).toContain('Expected focus on "externalId"');
+    });
+
+    it("fails when focused element is marked disabled", () => {
+      const step = evaluateTabStep(
+        "Register property",
+        {
+          tag: "BUTTON",
+          id: "Register property",
+          disabled: true,
+          outlineStyle: "solid",
+          outlineWidth: "2px",
+        },
+        13
+      );
+      expect(step.matchesExpected).toBe(false);
+      expect(step.failureReason).toContain("while marked disabled");
+    });
+
+    it("fails when focused element lacks observable focus styling", () => {
+      const step = evaluateTabStep(
+        "name",
+        {
+          tag: "INPUT",
+          id: "name",
+          disabled: false,
+          outlineStyle: "none",
+          outlineWidth: "0px",
+          boxShadow: "none",
+          borderColor: "rgb(200, 200, 200)",
+        },
+        2
+      );
+      expect(step.matchesExpected).toBe(true);
+      expect(step.hasObservableFocus).toBe(false);
+      expect(step.failureReason).toContain("lacks observable focus styling");
+    });
+  });
+
+  describe("Expected Tab Sequences", () => {
+    it("excludes disabled submit button from owner form enabled tab sequence", () => {
+      expect(EXPECTED_OWNER_FORM_ENABLED_TAB_SEQUENCE).toHaveLength(12);
+      expect(EXPECTED_OWNER_FORM_ENABLED_TAB_SEQUENCE).not.toContain("Register property");
+      expect(EXPECTED_OWNER_FORM_ENABLED_TAB_SEQUENCE[0]).toBe("Reset to Villa Nusa preset");
+      expect(EXPECTED_OWNER_FORM_ENABLED_TAB_SEQUENCE[11]).toBe("tokenPrice");
+    });
+
+    it("excludes disabled investment button from investment panel enabled tab sequence", () => {
+      expect(EXPECTED_INVESTMENT_PANEL_ENABLED_TAB_SEQUENCE).toHaveLength(4);
+      expect(EXPECTED_INVESTMENT_PANEL_ENABLED_TAB_SEQUENCE).not.toContain("Invest in AVNUSA");
+      expect(EXPECTED_INVESTMENT_PANEL_ENABLED_TAB_SEQUENCE[0]).toBe("investment-amount");
+      expect(EXPECTED_INVESTMENT_PANEL_ENABLED_TAB_SEQUENCE[3]).toBe("10M mIDR (1,000 tokens)");
     });
   });
 
@@ -184,9 +347,25 @@ describe("smoke-helpers", () => {
           disabled: true,
           label: "Register property",
           prerequisitePresent: true,
-          prerequisiteText: "Wallet and on-chain registration handler required",
+          prerequisiteText:
+            "Unavailable: this action needs a connected owner wallet on Arbitrum Sepolia.",
         },
-        "registration handler required"
+        OWNER_REGISTRATION_PREREQUISITE
+      );
+      expect(result.valid).toBe(true);
+      expect(result.failures).toHaveLength(0);
+    });
+
+    it("matches canonical investment prerequisite text", () => {
+      const result = validateActionPrerequisite(
+        {
+          disabled: true,
+          label: "Invest in AVNUSA",
+          prerequisitePresent: true,
+          prerequisiteText:
+            "Unavailable: this action needs a connected investor wallet on Arbitrum Sepolia (live chain adapter pending FE-002).",
+        },
+        INVESTMENT_PREREQUISITE
       );
       expect(result.valid).toBe(true);
       expect(result.failures).toHaveLength(0);
@@ -198,15 +377,15 @@ describe("smoke-helpers", () => {
           disabled: false,
           label: "Register property",
           prerequisitePresent: true,
-          prerequisiteText: "Wallet and on-chain registration handler required",
+          prerequisiteText: OWNER_REGISTRATION_PREREQUISITE,
         },
-        "registration handler required"
+        OWNER_REGISTRATION_PREREQUISITE
       );
       expect(result.valid).toBe(false);
       expect(result.failures[0]).toContain("is enabled! Must remain disabled");
     });
 
-    it("fails if prerequisite text does not match expected prerequisite", () => {
+    it("fails if prerequisite text is missing or wrong", () => {
       const result = validateActionPrerequisite(
         {
           disabled: true,
@@ -214,36 +393,10 @@ describe("smoke-helpers", () => {
           prerequisitePresent: true,
           prerequisiteText: "Random text",
         },
-        "registration handler required"
+        OWNER_REGISTRATION_PREREQUISITE
       );
       expect(result.valid).toBe(false);
       expect(result.failures[0]).toContain("expected containing");
-    });
-
-    it("matches canonical owner and investor prerequisite texts", () => {
-      const ownerCheck = validateActionPrerequisite(
-        {
-          disabled: true,
-          label: "Register property",
-          prerequisitePresent: true,
-          prerequisiteText:
-            "Unavailable: this action needs a connected owner wallet on Arbitrum Sepolia.",
-        },
-        "connected owner wallet on Arbitrum Sepolia"
-      );
-      expect(ownerCheck.valid).toBe(true);
-
-      const investorCheck = validateActionPrerequisite(
-        {
-          disabled: true,
-          label: "Invest in AVNUSA",
-          prerequisitePresent: true,
-          prerequisiteText:
-            "Unavailable: this action needs a connected investor wallet on Arbitrum Sepolia (live chain adapter pending FE-002).",
-        },
-        "connected investor wallet on Arbitrum Sepolia"
-      );
-      expect(investorCheck.valid).toBe(true);
     });
   });
 
@@ -304,7 +457,7 @@ describe("smoke-helpers", () => {
   });
 
   describe("formatSmokeReport", () => {
-    it("formats a complete summary report", () => {
+    it("formats a complete summary report with observed tab steps", () => {
       const summary: SmokeSummary = {
         overallStatus: "PASS",
         baseUrl: "http://localhost:3000",
@@ -325,11 +478,21 @@ describe("smoke-helpers", () => {
           {
             route: "/owner/property/new",
             status: "PASS",
-            tabOrderValid: true,
+            tabSequenceValid: true,
             visibleFocusValid: true,
             ariaAssociationsValid: true,
             disabledActionValid: true,
-            interactiveElements: [],
+            tabSteps: [
+              {
+                step: 1,
+                expectedControl: "Reset to Villa Nusa preset",
+                actualId: "",
+                actualText: "Reset to Villa Nusa preset",
+                actualTag: "BUTTON",
+                matchesExpected: true,
+                hasObservableFocus: true,
+              },
+            ],
             ariaChecks: [],
             actionChecks: [],
             failures: [],
@@ -342,7 +505,8 @@ describe("smoke-helpers", () => {
       expect(report).toContain("ARCHPROP BROWSER SMOKE TEST REPORT");
       expect(report).toContain("Base URL:     http://localhost:3000");
       expect(report).toContain("Status:       PASS");
-      expect(report).toContain("/owner/property/new");
+      expect(report).toContain("Observed Tab Steps:");
+      expect(report).toContain("Step 1: Reset to Villa Nusa preset");
       expect(report).toContain("OVERALL RESULT: PASS");
     });
 

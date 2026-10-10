@@ -3,87 +3,9 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
 import { createServer } from "node:net";
-
-export interface ViewportConfig {
-  width: number;
-  height: number;
-  name: string;
-}
-
-export interface CliOptions {
-  baseUrl: string;
-  chromiumPath?: string | undefined;
-  debugPort: number;
-  timeoutMs: number;
-  verbose: boolean;
-}
-
-export type CheckStatus = "PASS" | "FAIL" | "BLOCKED";
-
-export interface ViewportResult {
-  route: string;
-  viewport: ViewportConfig;
-  status: "PASS" | "FAIL";
-  innerWidth: number;
-  scrollWidth: number;
-  hasHorizontalOverflow: boolean;
-  clippedControls: string[];
-  details?: string | undefined;
-}
-
-export interface KeyboardInteractiveElement {
-  tag: string;
-  id: string;
-  name?: string | undefined;
-  type?: string | undefined;
-  disabled: boolean;
-  hasVisibleFocus?: boolean | undefined;
-}
-
-export interface AriaAssociationCheck {
-  fieldId: string;
-  hasAriaInvalid: boolean;
-  ariaDescribedBy: string | null;
-  targetElementsExist: boolean;
-  missingTargets?: string[] | undefined;
-}
-
-export interface ActionButtonCheck {
-  label: string;
-  disabled: boolean;
-  prerequisitePresent: boolean;
-  prerequisiteText?: string | undefined;
-}
-
-export interface PresetChipCheck {
-  label: string;
-  ariaPressed: string | null;
-}
-
-export interface RouteAccessibilityResult {
-  route: string;
-  status: "PASS" | "FAIL";
-  tabOrderValid: boolean;
-  visibleFocusValid: boolean;
-  ariaAssociationsValid: boolean;
-  disabledActionValid: boolean;
-  presetChipsValid?: boolean | undefined;
-  interactiveElements: KeyboardInteractiveElement[];
-  ariaChecks: AriaAssociationCheck[];
-  actionChecks: ActionButtonCheck[];
-  presetChecks?: PresetChipCheck[] | undefined;
-  failures: string[];
-}
-
-export interface SmokeSummary {
-  overallStatus: CheckStatus;
-  baseUrl: string;
-  chromiumPath?: string | undefined;
-  blockedReason?: string | undefined;
-  viewportResults: ViewportResult[];
-  routeAccessibilityResults: RouteAccessibilityResult[];
-  failures: string[];
-}
+// @ts-expect-error Node TS execution requires .ts extension in imports
+import { evaluateTabStep, evaluateViewportLayout, EXPECTED_INVESTMENT_PANEL_ENABLED_TAB_SEQUENCE, EXPECTED_OWNER_FORM_ENABLED_TAB_SEQUENCE, formatSmokeReport, INVESTMENT_PREREQUISITE, OWNER_REGISTRATION_PREREQUISITE, parseCliArgs, STANDARD_VIEWPORTS, TARGET_ROUTES, validateActionPrerequisite, validateAriaDescribedByTargets, validatePresetChips } from "./smoke-helpers.ts";
+import type { ActiveElementFocusInfo, CliOptions, RouteAccessibilityResult, SmokeSummary, TabStepResult, ViewportResult } from "./types.ts";
 
 interface CdpMessage {
   id?: number;
@@ -101,49 +23,6 @@ interface CdpClient {
   close: () => void;
 }
 
-export const STANDARD_VIEWPORTS: readonly ViewportConfig[] = [
-  { width: 320, height: 640, name: "320px mobile" },
-  { width: 375, height: 667, name: "375px mobile" },
-  { width: 768, height: 1024, name: "768px tablet" },
-  { width: 1024, height: 768, name: "1024px desktop" },
-  { width: 1440, height: 900, name: "1440px wide desktop" },
-];
-
-export const TARGET_ROUTES = [
-  "/owner/property/new",
-  "/property/ARCHPROP-001",
-] as const;
-
-export const EXPECTED_OWNER_FORM_ORDER = [
-  "Reset to Villa Nusa preset",
-  "externalId",
-  "name",
-  "location",
-  "propertyType",
-  "issuerName",
-  "description",
-  "indicativeValue",
-  "offeringTarget",
-  "economicRightsBps",
-  "tokenSupply",
-  "tokenPrice",
-  "Register property",
-] as const;
-
-export const EXPECTED_INVESTMENT_PANEL_ORDER = [
-  "investment-amount",
-  "1M mIDR (100 tokens)",
-  "5M mIDR (500 tokens)",
-  "10M mIDR (1,000 tokens)",
-  "Invest in AVNUSA",
-] as const;
-
-export const OWNER_REGISTRATION_PREREQUISITE =
-  "connected owner wallet on Arbitrum Sepolia";
-
-export const INVESTMENT_PREREQUISITE =
-  "connected investor wallet on Arbitrum Sepolia";
-
 const CHROMIUM_CANDIDATE_PATHS = [
   "/home/pupulion/.local/bin/chromium",
   "/usr/bin/chromium",
@@ -152,294 +31,6 @@ const CHROMIUM_CANDIDATE_PATHS = [
   "/opt/google/chrome/chrome",
   "/usr/bin/google-chrome-stable",
 ];
-
-export function parseCliArgs(
-  argv: string[],
-  env: Record<string, string | undefined> = process.env
-): CliOptions {
-  let baseUrl = env.ARCHPROP_BASE_URL || env.BASE_URL || "http://localhost:3000";
-  let chromiumPath: string | undefined = env.CHROMIUM_PATH || env.CHROME_PATH || undefined;
-  let debugPort = 9222;
-  let timeoutMs = 15000;
-  let verbose = false;
-
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i];
-    if (!arg) continue;
-
-    if (arg === "--base-url" || arg === "-u") {
-      const next = argv[++i];
-      if (next) baseUrl = next;
-    } else if (arg.startsWith("--base-url=")) {
-      baseUrl = arg.slice("--base-url=".length) || baseUrl;
-    } else if (
-      arg === "--chromium-path" ||
-      arg === "--chrome-path" ||
-      arg === "-c"
-    ) {
-      const next = argv[++i];
-      if (next) chromiumPath = next;
-    } else if (arg.startsWith("--chromium-path=")) {
-      chromiumPath = arg.slice("--chromium-path=".length) || chromiumPath;
-    } else if (arg.startsWith("--chrome-path=")) {
-      chromiumPath = arg.slice("--chrome-path=".length) || chromiumPath;
-    } else if (arg === "--debug-port" || arg === "-p") {
-      const next = argv[++i];
-      if (next) {
-        const parsedPort = Number.parseInt(next, 10);
-        if (!Number.isNaN(parsedPort) && parsedPort > 0) {
-          debugPort = parsedPort;
-        }
-      }
-    } else if (arg.startsWith("--debug-port=")) {
-      const parsedPort = Number.parseInt(arg.slice("--debug-port=".length), 10);
-      if (!Number.isNaN(parsedPort) && parsedPort > 0) {
-        debugPort = parsedPort;
-      }
-    } else if (arg === "--timeout" || arg === "-t") {
-      const next = argv[++i];
-      if (next) {
-        const parsedTimeout = Number.parseInt(next, 10);
-        if (!Number.isNaN(parsedTimeout) && parsedTimeout > 0) {
-          timeoutMs = parsedTimeout;
-        }
-      }
-    } else if (arg.startsWith("--timeout=")) {
-      const parsedTimeout = Number.parseInt(arg.slice("--timeout=".length), 10);
-      if (!Number.isNaN(parsedTimeout) && parsedTimeout > 0) {
-        timeoutMs = parsedTimeout;
-      }
-    } else if (arg === "--verbose" || arg === "-v") {
-      verbose = true;
-    }
-  }
-
-  if (baseUrl.endsWith("/")) {
-    baseUrl = baseUrl.slice(0, -1);
-  }
-
-  return {
-    baseUrl,
-    chromiumPath,
-    debugPort,
-    timeoutMs,
-    verbose,
-  };
-}
-
-export function evaluateViewportLayout(params: {
-  innerWidth: number;
-  scrollWidth: number;
-  clippedControls: string[];
-}): { status: "PASS" | "FAIL"; hasHorizontalOverflow: boolean; details: string } {
-  const { innerWidth, scrollWidth, clippedControls } = params;
-  const hasHorizontalOverflow = scrollWidth > innerWidth + 1;
-  const isClipped = clippedControls.length > 0;
-  const status: "PASS" | "FAIL" = hasHorizontalOverflow || isClipped ? "FAIL" : "PASS";
-
-  const failureReasons: string[] = [];
-  if (hasHorizontalOverflow) {
-    failureReasons.push(
-      `horizontal overflow detected (scrollWidth=${scrollWidth}px > innerWidth=${innerWidth}px)`
-    );
-  }
-  if (isClipped) {
-    failureReasons.push(
-      `clipped interactive controls: [${clippedControls.join(", ")}]`
-    );
-  }
-
-  const details =
-    failureReasons.length > 0
-      ? failureReasons.join("; ")
-      : `docWidth=${scrollWidth}px, winWidth=${innerWidth}px, clipped=0`;
-
-  return {
-    status,
-    hasHorizontalOverflow,
-    details,
-  };
-}
-
-export function validateTabOrder(
-  expectedSequence: readonly string[],
-  actualElements: readonly { id: string }[]
-): { valid: boolean; failures: string[] } {
-  const actualIds = actualElements.map((el) => el.id);
-  const failures: string[] = [];
-
-  let lastIndex = -1;
-  for (const expectedId of expectedSequence) {
-    const foundIndex = actualIds.indexOf(expectedId);
-    if (foundIndex === -1) {
-      failures.push(`Missing expected interactive element: "${expectedId}"`);
-    } else if (foundIndex < lastIndex) {
-      failures.push(
-        `Element "${expectedId}" at position ${foundIndex} appeared out of expected sequential order (previous was at index ${lastIndex})`
-      );
-    } else {
-      lastIndex = foundIndex;
-    }
-  }
-
-  return {
-    valid: failures.length === 0,
-    failures,
-  };
-}
-
-export function validateActionPrerequisite(
-  action: {
-    disabled: boolean;
-    label: string;
-    prerequisitePresent: boolean;
-    prerequisiteText?: string | undefined;
-  },
-  expectedPrerequisiteText: string
-): { valid: boolean; failures: string[] } {
-  const failures: string[] = [];
-
-  if (!action.disabled) {
-    failures.push(
-      `Action "${action.label}" is enabled! Must remain disabled without wallet/chain prerequisites.`
-    );
-  }
-
-  if (!action.prerequisitePresent) {
-    failures.push(
-      `Action "${action.label}" does not present prerequisite text.`
-    );
-  } else if (
-    action.prerequisiteText &&
-    !action.prerequisiteText.includes(expectedPrerequisiteText)
-  ) {
-    failures.push(
-      `Action "${action.label}" has prerequisite text "${action.prerequisiteText}", expected containing "${expectedPrerequisiteText}".`
-    );
-  }
-
-  return {
-    valid: failures.length === 0,
-    failures,
-  };
-}
-
-export function validatePresetChips(
-  presets: readonly PresetChipCheck[],
-  expectedSelectedLabel?: string
-): { valid: boolean; failures: string[] } {
-  const failures: string[] = [];
-
-  if (presets.length === 0) {
-    failures.push("No preset chips found.");
-    return { valid: false, failures };
-  }
-
-  let trueCount = 0;
-  for (const chip of presets) {
-    if (chip.ariaPressed !== "true" && chip.ariaPressed !== "false") {
-      failures.push(
-        `Preset "${chip.label}" has invalid aria-pressed="${chip.ariaPressed}". Must be "true" or "false".`
-      );
-    }
-    if (chip.ariaPressed === "true") {
-      trueCount++;
-      if (expectedSelectedLabel && chip.label !== expectedSelectedLabel) {
-        failures.push(
-          `Preset "${chip.label}" is pressed, but expected "${expectedSelectedLabel}".`
-        );
-      }
-    }
-  }
-
-  if (expectedSelectedLabel && trueCount === 0) {
-    failures.push(
-      `Expected preset "${expectedSelectedLabel}" to have aria-pressed="true", but none was selected.`
-    );
-  }
-
-  return {
-    valid: failures.length === 0,
-    failures,
-  };
-}
-
-export function validateAriaDescribedByTargets(
-  ariaDescribedBy: string | null,
-  availableDomIds: readonly string[]
-): { valid: boolean; missingTargets: string[] } {
-  if (!ariaDescribedBy) {
-    return { valid: true, missingTargets: [] };
-  }
-
-  const targets = ariaDescribedBy.trim().split(/\s+/).filter(Boolean);
-  const availableSet = new Set(availableDomIds);
-  const missingTargets = targets.filter((targetId) => !availableSet.has(targetId));
-
-  return {
-    valid: missingTargets.length === 0,
-    missingTargets,
-  };
-}
-
-export function formatSmokeReport(summary: SmokeSummary): string {
-  const lines: string[] = [];
-  lines.push("================================================================================");
-  lines.push("                   ARCHPROP BROWSER SMOKE TEST REPORT                           ");
-  lines.push("================================================================================");
-  lines.push(`Base URL:     ${summary.baseUrl}`);
-  lines.push(`Chromium:     ${summary.chromiumPath || "auto-detected"}`);
-  lines.push(`Status:       ${summary.overallStatus}`);
-  if (summary.blockedReason) {
-    lines.push(`Block Reason: ${summary.blockedReason}`);
-  }
-  lines.push("--------------------------------------------------------------------------------");
-
-  if (summary.viewportResults.length > 0) {
-    lines.push("VIEWPORT RESPONSIVENESS CHECKS:");
-    for (const vr of summary.viewportResults) {
-      const tag = vr.status === "PASS" ? "[PASS]" : "[FAIL]";
-      lines.push(
-        `  ${tag.padEnd(7)} ${vr.route.padEnd(28)} ${vr.viewport.name.padEnd(20)} (${vr.details || ""})`
-      );
-    }
-    lines.push("--------------------------------------------------------------------------------");
-  }
-
-  if (summary.routeAccessibilityResults.length > 0) {
-    lines.push("KEYBOARD & ACCESSIBILITY CHECKS:");
-    for (const ar of summary.routeAccessibilityResults) {
-      const tag = ar.status === "PASS" ? "[PASS]" : "[FAIL]";
-      lines.push(`  ${tag.padEnd(7)} Route: ${ar.route}`);
-      lines.push(`          Tab order:      ${ar.tabOrderValid ? "PASS" : "FAIL"}`);
-      lines.push(`          Visible focus:  ${ar.visibleFocusValid ? "PASS" : "FAIL"}`);
-      lines.push(`          ARIA relations: ${ar.ariaAssociationsValid ? "PASS" : "FAIL"}`);
-      lines.push(`          Disabled locks: ${ar.disabledActionValid ? "PASS" : "FAIL"}`);
-      if (ar.presetChipsValid !== undefined) {
-        lines.push(`          Preset chips:   ${ar.presetChipsValid ? "PASS" : "FAIL"}`);
-      }
-      if (ar.failures.length > 0) {
-        for (const failure of ar.failures) {
-          lines.push(`          - FAILURE: ${failure}`);
-        }
-      }
-    }
-    lines.push("--------------------------------------------------------------------------------");
-  }
-
-  if (summary.failures.length > 0) {
-    lines.push("OVERALL FAILURES:");
-    for (const failure of summary.failures) {
-      lines.push(`  - ${failure}`);
-    }
-    lines.push("--------------------------------------------------------------------------------");
-  }
-
-  lines.push(`OVERALL RESULT: ${summary.overallStatus}`);
-  lines.push("================================================================================");
-
-  return lines.join("\n");
-}
 
 function resolveChromiumPath(explicitPath?: string): string | null {
   if (explicitPath) {
@@ -561,6 +152,30 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+async function sendTabKey(cdpClient: CdpClient): Promise<void> {
+  await cdpClient.send("Input.dispatchKeyEvent", {
+    type: "rawKeyDown",
+    windowsVirtualKeyCode: 9,
+    nativeVirtualKeyCode: 9,
+    macCharCode: 9,
+    unmodifiedText: "\t",
+    text: "\t",
+    code: "Tab",
+    key: "Tab",
+  });
+  await cdpClient.send("Input.dispatchKeyEvent", {
+    type: "keyUp",
+    windowsVirtualKeyCode: 9,
+    nativeVirtualKeyCode: 9,
+    macCharCode: 9,
+    unmodifiedText: "\t",
+    text: "\t",
+    code: "Tab",
+    key: "Tab",
+  });
+  await sleep(60);
+}
+
 export async function runBrowserSmokeCheck(
   options: CliOptions
 ): Promise<SmokeSummary> {
@@ -650,7 +265,30 @@ export async function runBrowserSmokeCheck(
     // 6. Viewport responsiveness checks across all routes
     for (const route of TARGET_ROUTES) {
       const fullUrl = `${options.baseUrl}${route}`;
-      await cdpClient.send("Page.navigate", { url: fullUrl });
+
+      // Fail-closed HTTP status verification
+      try {
+        const routeRes = await fetch(fullUrl, { method: "GET" });
+        if (!routeRes.ok) {
+          summary.overallStatus = "FAIL";
+          const failMsg = `Target route ${route} returned HTTP ${routeRes.status} ${routeRes.statusText}`;
+          summary.failures.push(failMsg);
+          return summary;
+        }
+      } catch (err: unknown) {
+        summary.overallStatus = "FAIL";
+        const failMsg = `Failed to fetch target route ${route}: ${err instanceof Error ? err.message : String(err)}`;
+        summary.failures.push(failMsg);
+        return summary;
+      }
+
+      const navRes = await cdpClient.send<{ errorText?: string }>("Page.navigate", { url: fullUrl });
+      if (navRes.errorText) {
+        summary.overallStatus = "FAIL";
+        const failMsg = `CDP navigation to ${route} failed: ${navRes.errorText}`;
+        summary.failures.push(failMsg);
+        return summary;
+      }
       await sleep(800);
 
       for (const vp of STANDARD_VIEWPORTS) {
@@ -663,12 +301,16 @@ export async function runBrowserSmokeCheck(
         await sleep(150);
 
         interface LayoutEval {
-          result: {
-            value: {
+          result?: {
+            value?: {
               docWidth: number;
               winWidth: number;
               clippedControls: string[];
             };
+          };
+          exceptionDetails?: {
+            text?: string;
+            exception?: { description?: string };
           };
         }
 
@@ -695,26 +337,42 @@ export async function runBrowserSmokeCheck(
           returnByValue: true,
         });
 
-        const layoutData = evalRes.result?.value || {
-          docWidth: 0,
-          winWidth: vp.width,
-          clippedControls: [],
-        };
+        // Fail-closed handling for missing or exceptional evaluation results
+        if (evalRes.exceptionDetails) {
+          const detailMsg =
+            evalRes.exceptionDetails.text ||
+            evalRes.exceptionDetails.exception?.description ||
+            "Evaluation exception";
+          const failMsg = `[Viewport FAIL] ${route} at ${vp.name}: CDP Runtime exception (${detailMsg})`;
+          summary.failures.push(failMsg);
+          summary.viewportResults.push({
+            route,
+            viewport: vp,
+            status: "FAIL",
+            innerWidth: vp.width,
+            scrollWidth: 0,
+            hasHorizontalOverflow: false,
+            clippedControls: [],
+            details: `CDP evaluation threw exception: ${detailMsg}`,
+          });
+          continue;
+        }
 
+        const rawLayout = evalRes.result?.value;
         const evalStatus = evaluateViewportLayout({
-          innerWidth: layoutData.winWidth,
-          scrollWidth: layoutData.docWidth,
-          clippedControls: layoutData.clippedControls,
+          innerWidth: rawLayout?.winWidth,
+          scrollWidth: rawLayout?.docWidth,
+          clippedControls: rawLayout?.clippedControls,
         });
 
         const vResult: ViewportResult = {
           route,
           viewport: vp,
           status: evalStatus.status,
-          innerWidth: layoutData.winWidth,
-          scrollWidth: layoutData.docWidth,
+          innerWidth: typeof rawLayout?.winWidth === "number" ? rawLayout.winWidth : vp.width,
+          scrollWidth: typeof rawLayout?.docWidth === "number" ? rawLayout.docWidth : 0,
           hasHorizontalOverflow: evalStatus.hasHorizontalOverflow,
-          clippedControls: layoutData.clippedControls,
+          clippedControls: Array.isArray(rawLayout?.clippedControls) ? rawLayout.clippedControls : [],
           details: evalStatus.details,
         };
 
@@ -727,7 +385,7 @@ export async function runBrowserSmokeCheck(
       }
     }
 
-    // 7. Route Accessibility & Keyboard Checks
+    // 7. Route Accessibility & CDP-Driven Tab Navigation
     await cdpClient.send("Emulation.setDeviceMetricsOverride", {
       width: 1024,
       height: 768,
@@ -741,142 +399,219 @@ export async function runBrowserSmokeCheck(
       await cdpClient.send("Page.navigate", { url: `${options.baseUrl}${route}` });
       await sleep(600);
 
-      interface OwnerFormEval {
-        result: {
-          value: {
-            interactiveElements: {
-              tag: string;
-              id: string;
-              type?: string;
-              disabled: boolean;
-              hasFocusClasses: boolean;
-            }[];
-            submitButton: {
-              disabled: boolean;
-              label: string;
-              prerequisitePresent: boolean;
-              prerequisiteText?: string;
-            };
-            invalidMutationResult: {
-              targetAriaInvalid: boolean;
-              supplyAriaInvalid: boolean;
-              priceAriaInvalid: boolean;
-              targetDescribedBy: string | null;
-              errorAlertId: string | null;
-            };
-            domIds: string[];
+      const routeFailures: string[] = [];
+      const tabSteps: TabStepResult[] = [];
+
+      // Step A: Focus the element preceding the property form in tab order
+      interface FocusPrepEval {
+        result?: {
+          value?: {
+            focusedPreceding: boolean;
+            precedingId: string;
+            precedingTag: string;
           };
         };
       }
 
-      const formEval = await cdpClient.send<OwnerFormEval>("Runtime.evaluate", {
+      const focusPrep = await cdpClient.send<FocusPrepEval>("Runtime.evaluate", {
         expression: `(() => {
           const form = document.querySelector('form[aria-label="Property details"]');
           if (!form) return null;
+          const firstControl = form.querySelector('button, input, textarea');
+          if (!firstControl) return null;
 
-          const controls = Array.from(form.querySelectorAll('button, input, textarea'));
-          const interactiveElements = controls.map(el => ({
-            tag: el.tagName.toLowerCase(),
-            id: el.id || el.name || el.textContent?.trim().slice(0, 30) || 'unnamed',
-            type: el.type,
-            disabled: el.disabled,
-            hasFocusClasses: el.className.includes('focus') || el.className.includes('ring') || el.className.includes('outline'),
-          }));
-
-          const submitBtn = Array.from(form.querySelectorAll('button')).find(b => b.textContent?.includes('Register property'));
-          const submitContainer = submitBtn ? submitBtn.closest('span') || submitBtn.parentElement : null;
-          const submitButton = {
-            disabled: submitBtn ? submitBtn.disabled : false,
-            label: submitBtn ? submitBtn.textContent?.trim() : '',
-            prerequisitePresent: submitContainer ? submitContainer.textContent?.includes('owner wallet on Arbitrum Sepolia') || false : false,
-            prerequisiteText: submitContainer ? submitContainer.textContent?.trim() : '',
-          };
-
-          // Mutate tokenPrice to trigger invariant error using React native setter
-          const priceInput = form.querySelector('#tokenPrice');
-          let invalidMutationResult = {
-            targetAriaInvalid: false,
-            supplyAriaInvalid: false,
-            priceAriaInvalid: false,
-            targetDescribedBy: null,
-            errorAlertId: null,
-          };
-
-          if (priceInput) {
-            const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
-            if (nativeSetter) {
-              nativeSetter.call(priceInput, "9999");
-            } else {
-              priceInput.value = "9999";
-            }
-            priceInput.dispatchEvent(new Event('input', { bubbles: true }));
-            priceInput.dispatchEvent(new Event('change', { bubbles: true }));
-
-            const targetInput = form.querySelector('#offeringTarget');
-            const supplyInput = form.querySelector('#tokenSupply');
-            const alertEl = form.querySelector('#offering-invariant-error');
-
-            invalidMutationResult = {
-              targetAriaInvalid: targetInput?.getAttribute('aria-invalid') === 'true',
-              supplyAriaInvalid: supplyInput?.getAttribute('aria-invalid') === 'true',
-              priceAriaInvalid: priceInput?.getAttribute('aria-invalid') === 'true',
-              targetDescribedBy: targetInput?.getAttribute('aria-describedby'),
-              errorAlertId: alertEl ? alertEl.id : null,
+          const allFocusables = Array.from(document.querySelectorAll('a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled])'));
+          const idx = allFocusables.indexOf(firstControl);
+          if (idx > 0) {
+            allFocusables[idx - 1].focus();
+            return {
+              focusedPreceding: true,
+              precedingId: allFocusables[idx - 1].id || allFocusables[idx - 1].textContent?.trim().slice(0, 20) || '',
+              precedingTag: allFocusables[idx - 1].tagName,
             };
-
-            // Reset back
-            const resetBtn = Array.from(form.querySelectorAll('button')).find(b => b.textContent?.includes('Reset'));
-            if (resetBtn) {
-              resetBtn.click();
-            }
+          } else {
+            document.body.focus();
+            return {
+              focusedPreceding: true,
+              precedingId: 'body',
+              precedingTag: 'BODY',
+            };
           }
+        })()`,
+        returnByValue: true,
+      });
 
-          const domIds = Array.from(document.querySelectorAll('[id]')).map(el => el.id);
+      if (!focusPrep.result?.value?.focusedPreceding) {
+        routeFailures.push("Unable to initialize keyboard tab navigation before property details form.");
+      }
 
+      // Step B: Drive actual Tab key presses and verify each enabled control in sequence
+      for (let i = 0; i < EXPECTED_OWNER_FORM_ENABLED_TAB_SEQUENCE.length; i++) {
+        const expectedControl = EXPECTED_OWNER_FORM_ENABLED_TAB_SEQUENCE[i]!;
+        await sendTabKey(cdpClient);
+
+        interface ActiveElementEval {
+          result?: {
+            value?: ActiveElementFocusInfo;
+          };
+          exceptionDetails?: { text?: string };
+        }
+
+        const activeEval = await cdpClient.send<ActiveElementEval>("Runtime.evaluate", {
+          expression: `(() => {
+            const el = document.activeElement;
+            if (!el) return null;
+            const cs = window.getComputedStyle(el);
+            return {
+              tag: el.tagName,
+              id: el.id,
+              text: el.textContent?.trim().slice(0, 35) || '',
+              disabled: el.disabled || false,
+              outlineStyle: cs.outlineStyle,
+              outlineWidth: cs.outlineWidth,
+              boxShadow: cs.boxShadow,
+              borderColor: cs.borderColor,
+            };
+          })()`,
+          returnByValue: true,
+        });
+
+        const activeElement = activeEval.result?.value || {
+          tag: "UNKNOWN",
+          id: "",
+          text: "",
+          disabled: false,
+        };
+
+        const stepResult = evaluateTabStep(expectedControl, activeElement, i + 1);
+        tabSteps.push(stepResult);
+
+        if (stepResult.failureReason) {
+          routeFailures.push(stepResult.failureReason);
+        }
+      }
+
+      // Step C: Send one more Tab and verify focus does NOT land on the disabled Register button
+      await sendTabKey(cdpClient);
+      interface PostTabEval {
+        result?: {
+          value?: {
+            activeId: string;
+            activeTag: string;
+            activeText: string;
+          };
+        };
+      }
+
+      const postTab = await cdpClient.send<PostTabEval>("Runtime.evaluate", {
+        expression: `(() => {
+          const el = document.activeElement;
           return {
-            interactiveElements,
-            submitButton,
-            invalidMutationResult,
-            domIds,
+            activeId: el?.id || '',
+            activeTag: el?.tagName || '',
+            activeText: el?.textContent?.trim().slice(0, 30) || '',
           };
         })()`,
         returnByValue: true,
       });
 
-      const formData = formEval.result?.value;
-      const routeFailures: string[] = [];
-
-      if (!formData) {
-        routeFailures.push("Property details form not found on page.");
+      if (postTab.result?.value?.activeText.includes("Register property")) {
+        routeFailures.push("Disabled action button 'Register property' improperly received tab focus!");
       }
 
-      const elements = formData?.interactiveElements || [];
-      const tabOrderCheck = validateTabOrder(EXPECTED_OWNER_FORM_ORDER, elements);
-      if (!tabOrderCheck.valid) {
-        routeFailures.push(...tabOrderCheck.failures);
+      // Step D: Separately verify disabled action state & prerequisite
+      interface SubmitButtonEval {
+        result?: {
+          value?: {
+            disabled: boolean;
+            label: string;
+            prerequisitePresent: boolean;
+            prerequisiteText?: string;
+          };
+        };
       }
 
-      // Check focus classes on non-disabled interactive elements
-      const focusClassesCheck = elements
-        .filter((el) => !el.disabled)
-        .every((el) => el.hasFocusClasses);
-      if (!focusClassesCheck) {
-        routeFailures.push("One or more active form controls lack visible focus classes.");
+      const submitCheck = await cdpClient.send<SubmitButtonEval>("Runtime.evaluate", {
+        expression: `(() => {
+          const form = document.querySelector('form[aria-label="Property details"]');
+          if (!form) return null;
+          const submitBtn = Array.from(form.querySelectorAll('button')).find(b => b.textContent?.includes('Register property'));
+          const container = submitBtn ? submitBtn.closest('span') || submitBtn.parentElement : null;
+          return {
+            disabled: submitBtn ? submitBtn.disabled : false,
+            label: submitBtn ? submitBtn.textContent?.trim() : '',
+            prerequisitePresent: container ? container.textContent?.includes('owner wallet on Arbitrum Sepolia') || false : false,
+            prerequisiteText: container ? container.textContent?.trim() : '',
+          };
+        })()`,
+        returnByValue: true,
+      });
+
+      const submitData = submitCheck.result?.value || {
+        disabled: false,
+        label: "Register property",
+        prerequisitePresent: false,
+      };
+
+      const actionPrereq = validateActionPrerequisite(submitData, OWNER_REGISTRATION_PREREQUISITE);
+      if (!actionPrereq.valid) {
+        routeFailures.push(...actionPrereq.failures);
       }
 
-      const actionCheck = validateActionPrerequisite(
-        formData?.submitButton || {
-          disabled: false,
-          label: "Register property",
-          prerequisitePresent: false,
-        },
-        OWNER_REGISTRATION_PREREQUISITE
-      );
-      if (!actionCheck.valid) {
-        routeFailures.push(...actionCheck.failures);
+      // Step E: Verify ARIA error relationships upon invalid mutation
+      interface MutationEval {
+        result?: {
+          value?: {
+            targetAriaInvalid: boolean;
+            supplyAriaInvalid: boolean;
+            priceAriaInvalid: boolean;
+            targetDescribedBy: string | null;
+            errorAlertId: string | null;
+            domIds: string[];
+          };
+        };
       }
 
-      const mutation = formData?.invalidMutationResult;
+      const mutationEval = await cdpClient.send<MutationEval>("Runtime.evaluate", {
+        expression: `(() => {
+          const form = document.querySelector('form[aria-label="Property details"]');
+          if (!form) return null;
+
+          const priceInput = form.querySelector('#tokenPrice');
+          if (!priceInput) return null;
+
+          const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+          if (nativeSetter) {
+            nativeSetter.call(priceInput, "9999");
+          } else {
+            priceInput.value = "9999";
+          }
+          priceInput.dispatchEvent(new Event('input', { bubbles: true }));
+          priceInput.dispatchEvent(new Event('change', { bubbles: true }));
+
+          const targetInput = form.querySelector('#offeringTarget');
+          const supplyInput = form.querySelector('#tokenSupply');
+          const alertEl = form.querySelector('#offering-invariant-error');
+
+          const res = {
+            targetAriaInvalid: targetInput?.getAttribute('aria-invalid') === 'true',
+            supplyAriaInvalid: supplyInput?.getAttribute('aria-invalid') === 'true',
+            priceAriaInvalid: priceInput?.getAttribute('aria-invalid') === 'true',
+            targetDescribedBy: targetInput?.getAttribute('aria-describedby'),
+            errorAlertId: alertEl ? alertEl.id : null,
+            domIds: Array.from(document.querySelectorAll('[id]')).map(el => el.id),
+          };
+
+          // Reset back via preset button
+          const resetBtn = Array.from(form.querySelectorAll('button')).find(b => b.textContent?.includes('Reset'));
+          if (resetBtn) resetBtn.click();
+
+          return res;
+        })()`,
+        returnByValue: true,
+      });
+
+      const mutation = mutationEval.result?.value;
       const ariaValid =
         mutation?.targetAriaInvalid === true &&
         mutation?.supplyAriaInvalid === true &&
@@ -886,18 +621,31 @@ export async function runBrowserSmokeCheck(
 
       if (!ariaValid) {
         routeFailures.push(
-          "Invariant failure does not correctly set aria-invalid and aria-describedby pointing to #offering-invariant-error."
+          "Invariant failure does not correctly set aria-invalid and aria-describedby referencing #offering-invariant-error."
         );
       }
+
+      const ariaTargetCheck = validateAriaDescribedByTargets(
+        mutation?.targetDescribedBy || null,
+        mutation?.domIds || []
+      );
+      if (!ariaTargetCheck.valid) {
+        routeFailures.push(
+          `ARIA targets missing: [${ariaTargetCheck.missingTargets.join(", ")}]`
+        );
+      }
+
+      const tabSequenceValid = tabSteps.every((s) => s.matchesExpected);
+      const visibleFocusValid = tabSteps.every((s) => s.hasObservableFocus);
 
       const accessResult: RouteAccessibilityResult = {
         route,
         status: routeFailures.length === 0 ? "PASS" : "FAIL",
-        tabOrderValid: tabOrderCheck.valid,
-        visibleFocusValid: focusClassesCheck,
-        ariaAssociationsValid: ariaValid,
-        disabledActionValid: actionCheck.valid,
-        interactiveElements: elements,
+        tabSequenceValid,
+        visibleFocusValid,
+        ariaAssociationsValid: ariaValid && ariaTargetCheck.valid,
+        disabledActionValid: actionPrereq.valid,
+        tabSteps,
         ariaChecks: [
           {
             fieldId: "offeringTarget",
@@ -906,22 +654,13 @@ export async function runBrowserSmokeCheck(
             targetElementsExist: mutation?.errorAlertId !== null,
           },
         ],
-        actionChecks: [
-          {
-            label: formData?.submitButton.label || "Register property",
-            disabled: formData?.submitButton.disabled || false,
-            prerequisitePresent: formData?.submitButton.prerequisitePresent || false,
-            prerequisiteText: formData?.submitButton.prerequisiteText,
-          },
-        ],
+        actionChecks: [submitData],
         failures: routeFailures,
       };
 
       summary.routeAccessibilityResults.push(accessResult);
       if (accessResult.status === "FAIL") {
-        summary.failures.push(
-          `[Accessibility FAIL] ${route}: ${routeFailures.join("; ")}`
-        );
+        summary.failures.push(`[Accessibility FAIL] ${route}: ${routeFailures.join("; ")}`);
       }
     }
 
@@ -931,195 +670,265 @@ export async function runBrowserSmokeCheck(
       await cdpClient.send("Page.navigate", { url: `${options.baseUrl}${route}` });
       await sleep(600);
 
-      interface InvestPanelEval {
-        result: {
-          value: {
-            interactiveElements: {
-              tag: string;
-              id: string;
-              type?: string;
-              disabled: boolean;
-              hasFocusClasses: boolean;
-            }[];
-            presetChips: {
-              label: string;
-              ariaPressed: string | null;
-            }[];
-            investButton: {
-              disabled: boolean;
-              label: string;
-              prerequisitePresent: boolean;
-              prerequisiteText?: string;
-            };
-            invalidInputResult: {
-              amountAriaInvalid: boolean;
-              amountDescribedBy: string | null;
-              errorAlertId: string | null;
-            };
-            domIds: string[];
+      const routeFailures: string[] = [];
+      const tabSteps: TabStepResult[] = [];
+
+      // Step A: Focus the element preceding investment-amount in tab order
+      interface FocusPrepPanelEval {
+        result?: {
+          value?: {
+            focusedPreceding: boolean;
+            precedingId: string;
           };
         };
       }
 
-      const panelEval = await cdpClient.send<InvestPanelEval>("Runtime.evaluate", {
+      const focusPrep = await cdpClient.send<FocusPrepPanelEval>("Runtime.evaluate", {
+        expression: `(() => {
+          const amountInput = document.querySelector("#investment-amount");
+          if (!amountInput) return null;
+          const allFocusables = Array.from(document.querySelectorAll('a[href], button:not([disabled]), input:not([disabled])'));
+          const idx = allFocusables.indexOf(amountInput);
+          if (idx > 0) {
+            allFocusables[idx - 1].focus();
+            return {
+              focusedPreceding: true,
+              precedingId: allFocusables[idx - 1].id || allFocusables[idx - 1].textContent?.trim().slice(0, 20) || '',
+            };
+          }
+          return null;
+        })()`,
+        returnByValue: true,
+      });
+
+      if (!focusPrep.result?.value?.focusedPreceding) {
+        routeFailures.push("Unable to initialize keyboard tab navigation before investment panel.");
+      }
+
+      // Step B: Drive Tab key presses for each enabled control in sequence
+      for (let i = 0; i < EXPECTED_INVESTMENT_PANEL_ENABLED_TAB_SEQUENCE.length; i++) {
+        const expectedControl = EXPECTED_INVESTMENT_PANEL_ENABLED_TAB_SEQUENCE[i]!;
+        await sendTabKey(cdpClient);
+
+        interface ActiveElementEval {
+          result?: {
+            value?: ActiveElementFocusInfo;
+          };
+        }
+
+        const activeEval = await cdpClient.send<ActiveElementEval>("Runtime.evaluate", {
+          expression: `(() => {
+            const el = document.activeElement;
+            if (!el) return null;
+            const cs = window.getComputedStyle(el);
+            return {
+              tag: el.tagName,
+              id: el.id,
+              text: el.textContent?.trim().slice(0, 35) || '',
+              disabled: el.disabled || false,
+              outlineStyle: cs.outlineStyle,
+              outlineWidth: cs.outlineWidth,
+              boxShadow: cs.boxShadow,
+              borderColor: cs.borderColor,
+            };
+          })()`,
+          returnByValue: true,
+        });
+
+        const activeElement = activeEval.result?.value || {
+          tag: "UNKNOWN",
+          id: "",
+          text: "",
+          disabled: false,
+        };
+
+        const stepResult = evaluateTabStep(expectedControl, activeElement, i + 1);
+        tabSteps.push(stepResult);
+
+        if (stepResult.failureReason) {
+          routeFailures.push(stepResult.failureReason);
+        }
+      }
+
+      // Step C: Send one more Tab and verify focus leaves panel (does NOT enter disabled Invest button)
+      await sendTabKey(cdpClient);
+      interface PostTabPanelEval {
+        result?: {
+          value?: {
+            activeText: string;
+          };
+        };
+      }
+
+      const postTab = await cdpClient.send<PostTabPanelEval>("Runtime.evaluate", {
+        expression: `(() => {
+          const el = document.activeElement;
+          return { activeText: el?.textContent?.trim().slice(0, 30) || '' };
+        })()`,
+        returnByValue: true,
+      });
+
+      if (postTab.result?.value?.activeText.includes("Invest in")) {
+        routeFailures.push("Disabled action button 'Invest in AVNUSA' improperly received tab focus!");
+      }
+
+      // Step D: Separately verify disabled action state & prerequisite
+      interface InvestButtonEval {
+        result?: {
+          value?: {
+            disabled: boolean;
+            label: string;
+            prerequisitePresent: boolean;
+            prerequisiteText?: string;
+          };
+        };
+      }
+
+      const investCheck = await cdpClient.send<InvestButtonEval>("Runtime.evaluate", {
         expression: `(() => {
           const panel = document.querySelector('[aria-label="Investment preview"]');
           if (!panel) return null;
-
-          const controls = Array.from(panel.querySelectorAll('button, input'));
-          const interactiveElements = controls.map(el => ({
-            tag: el.tagName.toLowerCase(),
-            id: el.id || el.textContent?.trim().slice(0, 30) || 'unnamed',
-            type: el.type,
-            disabled: el.disabled,
-            hasFocusClasses: el.className.includes('focus') || el.className.includes('outline'),
-          }));
-
-          const presetButtons = Array.from(panel.querySelectorAll('div.flex.flex-wrap button, button[aria-pressed]'));
-          const presetChips = presetButtons.map(b => ({
-            label: b.textContent?.trim() || '',
-            ariaPressed: b.getAttribute('aria-pressed'),
-          }));
-
           const investBtn = Array.from(panel.querySelectorAll('button')).find(b => b.textContent?.includes('Invest in'));
-          const investContainer = investBtn ? investBtn.closest('span') || investBtn.parentElement : null;
-          const investButton = {
+          const container = investBtn ? investBtn.closest('span') || investBtn.parentElement : null;
+          return {
             disabled: investBtn ? investBtn.disabled : false,
             label: investBtn ? investBtn.textContent?.trim() : '',
-            prerequisitePresent: investContainer ? investContainer.textContent?.includes('investor wallet on Arbitrum Sepolia') || false : false,
-            prerequisiteText: investContainer ? investContainer.textContent?.trim() : '',
-          };
-
-          // Mutate amount to invalid divisible value using React native setter
-          const amountInput = panel.querySelector('#investment-amount');
-          let invalidInputResult = {
-            amountAriaInvalid: false,
-            amountDescribedBy: null,
-            errorAlertId: null,
-          };
-
-          if (amountInput) {
-            const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
-            if (nativeSetter) {
-              nativeSetter.call(amountInput, "123456");
-            } else {
-              amountInput.value = "123456";
-            }
-            amountInput.dispatchEvent(new Event('input', { bubbles: true }));
-            amountInput.dispatchEvent(new Event('change', { bubbles: true }));
-
-            const errorEl = panel.querySelector('#investment-error');
-            invalidInputResult = {
-              amountAriaInvalid: amountInput.getAttribute('aria-invalid') === 'true',
-              amountDescribedBy: amountInput.getAttribute('aria-describedby'),
-              errorAlertId: errorEl ? errorEl.id : null,
-            };
-
-            // Reset back to 1M preset
-            if (presetButtons[0]) {
-              presetButtons[0].click();
-            }
-          }
-
-          const domIds = Array.from(document.querySelectorAll('[id]')).map(el => el.id);
-
-          return {
-            interactiveElements,
-            presetChips,
-            investButton,
-            invalidInputResult,
-            domIds,
+            prerequisitePresent: container ? container.textContent?.includes('investor wallet on Arbitrum Sepolia') || false : false,
+            prerequisiteText: container ? container.textContent?.trim() : '',
           };
         })()`,
         returnByValue: true,
       });
 
-      const panelData = panelEval.result?.value;
-      const routeFailures: string[] = [];
+      const investData = investCheck.result?.value || {
+        disabled: false,
+        label: "Invest in AVNUSA",
+        prerequisitePresent: false,
+      };
 
-      if (!panelData) {
-        routeFailures.push("Investment preview panel not found on page.");
+      const actionPrereq = validateActionPrerequisite(investData, INVESTMENT_PREREQUISITE);
+      if (!actionPrereq.valid) {
+        routeFailures.push(...actionPrereq.failures);
       }
 
-      const elements = panelData?.interactiveElements || [];
-      const tabOrderCheck = validateTabOrder(EXPECTED_INVESTMENT_PANEL_ORDER, elements);
-      if (!tabOrderCheck.valid) {
-        routeFailures.push(...tabOrderCheck.failures);
+      // Step E: Preset chips aria-pressed check
+      interface PresetEval {
+        result?: {
+          value?: {
+            chips: { label: string; ariaPressed: string | null }[];
+          };
+        };
       }
 
-      // Check focus classes on active controls
-      const focusClassesCheck = elements
-        .filter((el) => !el.disabled)
-        .every((el) => el.hasFocusClasses);
-      if (!focusClassesCheck) {
-        routeFailures.push("One or more active investment panel controls lack visible focus classes.");
-      }
+      const presetEval = await cdpClient.send<PresetEval>("Runtime.evaluate", {
+        expression: `(() => {
+          const panel = document.querySelector('[aria-label="Investment preview"]');
+          if (!panel) return null;
+          const btns = Array.from(panel.querySelectorAll('button[aria-pressed]'));
+          return {
+            chips: btns.map(b => ({
+              label: b.textContent?.trim() || '',
+              ariaPressed: b.getAttribute('aria-pressed'),
+            })),
+          };
+        })()`,
+        returnByValue: true,
+      });
 
-      const presetCheck = validatePresetChips(
-        panelData?.presetChips || [],
-        "1M mIDR (100 tokens)"
-      );
+      const chips = presetEval.result?.value?.chips || [];
+      const presetCheck = validatePresetChips(chips, "1M mIDR (100 tokens)");
       if (!presetCheck.valid) {
         routeFailures.push(...presetCheck.failures);
       }
 
-      const actionCheck = validateActionPrerequisite(
-        panelData?.investButton || {
-          disabled: false,
-          label: "Invest in AVNUSA",
-          prerequisitePresent: false,
-        },
-        INVESTMENT_PREREQUISITE
-      );
-      if (!actionCheck.valid) {
-        routeFailures.push(...actionCheck.failures);
+      // Step F: Invalid amount error association check
+      interface InvalidAmountEval {
+        result?: {
+          value?: {
+            amountAriaInvalid: boolean;
+            amountDescribedBy: string | null;
+            errorAlertId: string | null;
+            domIds: string[];
+          };
+        };
       }
 
-      const invalidInput = panelData?.invalidInputResult;
-      const ariaDescribedByCheck = validateAriaDescribedByTargets(
-        invalidInput?.amountDescribedBy || null,
-        panelData?.domIds || []
+      const invalidAmountEval = await cdpClient.send<InvalidAmountEval>("Runtime.evaluate", {
+        expression: `(() => {
+          const panel = document.querySelector('[aria-label="Investment preview"]');
+          if (!panel) return null;
+
+          const amountInput = panel.querySelector('#investment-amount');
+          if (!amountInput) return null;
+
+          const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+          if (nativeSetter) {
+            nativeSetter.call(amountInput, "123456");
+          } else {
+            amountInput.value = "123456";
+          }
+          amountInput.dispatchEvent(new Event('input', { bubbles: true }));
+          amountInput.dispatchEvent(new Event('change', { bubbles: true }));
+
+          const errorEl = panel.querySelector('#investment-error');
+          const res = {
+            amountAriaInvalid: amountInput.getAttribute('aria-invalid') === 'true',
+            amountDescribedBy: amountInput.getAttribute('aria-describedby'),
+            errorAlertId: errorEl ? errorEl.id : null,
+            domIds: Array.from(document.querySelectorAll('[id]')).map(el => el.id),
+          };
+
+          // Reset back via first chip
+          const firstChip = panel.querySelector('button[aria-pressed]');
+          if (firstChip) firstChip.click();
+
+          return res;
+        })()`,
+        returnByValue: true,
+      });
+
+      const invalidAmount = invalidAmountEval.result?.value;
+      const ariaTargetCheck = validateAriaDescribedByTargets(
+        invalidAmount?.amountDescribedBy || null,
+        invalidAmount?.domIds || []
       );
-      if (!ariaDescribedByCheck.valid) {
+      if (!ariaTargetCheck.valid) {
         routeFailures.push(
-          `Investment error aria-describedby references missing DOM targets: [${ariaDescribedByCheck.missingTargets.join(", ")}]`
+          `Investment error aria-describedby references missing targets: [${ariaTargetCheck.missingTargets.join(", ")}]`
         );
       }
+      if (invalidAmount?.amountAriaInvalid !== true) {
+        routeFailures.push("Amount input does not set aria-invalid='true' when value is not divisible by unit price.");
+      }
+
+      const tabSequenceValid = tabSteps.every((s) => s.matchesExpected);
+      const visibleFocusValid = tabSteps.every((s) => s.hasObservableFocus);
 
       const accessResult: RouteAccessibilityResult = {
         route,
         status: routeFailures.length === 0 ? "PASS" : "FAIL",
-        tabOrderValid: tabOrderCheck.valid,
-        visibleFocusValid: focusClassesCheck,
-        ariaAssociationsValid: ariaDescribedByCheck.valid && invalidInput?.amountAriaInvalid === true,
-        disabledActionValid: actionCheck.valid,
+        tabSequenceValid,
+        visibleFocusValid,
+        ariaAssociationsValid: ariaTargetCheck.valid && invalidAmount?.amountAriaInvalid === true,
+        disabledActionValid: actionPrereq.valid,
         presetChipsValid: presetCheck.valid,
-        interactiveElements: elements,
+        tabSteps,
         ariaChecks: [
           {
             fieldId: "investment-amount",
-            hasAriaInvalid: invalidInput?.amountAriaInvalid || false,
-            ariaDescribedBy: invalidInput?.amountDescribedBy || null,
-            targetElementsExist: ariaDescribedByCheck.valid,
+            hasAriaInvalid: invalidAmount?.amountAriaInvalid || false,
+            ariaDescribedBy: invalidAmount?.amountDescribedBy || null,
+            targetElementsExist: ariaTargetCheck.valid,
           },
         ],
-        actionChecks: [
-          {
-            label: panelData?.investButton.label || "Invest in AVNUSA",
-            disabled: panelData?.investButton.disabled || false,
-            prerequisitePresent: panelData?.investButton.prerequisitePresent || false,
-            prerequisiteText: panelData?.investButton.prerequisiteText,
-          },
-        ],
-        presetChecks: panelData?.presetChips,
+        actionChecks: [investData],
+        presetChecks: chips,
         failures: routeFailures,
       };
 
       summary.routeAccessibilityResults.push(accessResult);
       if (accessResult.status === "FAIL") {
-        summary.failures.push(
-          `[Accessibility FAIL] ${route}: ${routeFailures.join("; ")}`
-        );
+        summary.failures.push(`[Accessibility FAIL] ${route}: ${routeFailures.join("; ")}`);
       }
     }
 
@@ -1135,7 +944,7 @@ export async function runBrowserSmokeCheck(
         try {
           chromeProcess?.kill("SIGKILL");
         } catch {
-          // Already exited
+          // Process exited
         }
       }, 500).unref();
     }
