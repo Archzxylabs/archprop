@@ -167,22 +167,40 @@ export async function POST(request: NextRequest) {
   // check, chain ID 421614 verification, valid receipt, and matching event log.
   // chain_epoch_id is taken from the decoded log, never from the request.
 
-  // Pre-check on the constraint that actually exists: one epoch per
-  // (property, period). Checking chain_tx_hash here would miss a repeat
-  // submission that reuses the period with a different (or forged) tx hash,
-  // and would surface as a 500-ish surprise instead of a clear 409.
-  const { data: existing, error: existingError } = await serviceClient
+  // Pre-check 1: one epoch per (property, period).
+  const { data: existingPeriod, error: periodCheckError } = await serviceClient
     .from("revenue_epochs")
     .select("id")
     .eq("property_id", property.id)
     .eq("period", input.period)
     .limit(1)
     .maybeSingle();
-  if (existingError) {
+  if (periodCheckError) {
     return jsonError(500, "query_failed", "Existing revenue records could not be checked.");
   }
-  if (existing) {
+  if (existingPeriod) {
     return jsonError(409, "conflict", "This period has already been recorded for this property.");
+  }
+
+  // Pre-check 2: one record per verified (property, chain_epoch_id) to prevent replay
+  // of an on-chain epoch under a different off-chain period.
+  const chainEpochIdStr = epochLog.epochId.toString(10);
+  const { data: existingEpoch, error: epochCheckError } = await serviceClient
+    .from("revenue_epochs")
+    .select("id")
+    .eq("property_id", property.id)
+    .eq("chain_epoch_id", chainEpochIdStr)
+    .limit(1)
+    .maybeSingle();
+  if (epochCheckError) {
+    return jsonError(500, "query_failed", "Existing revenue records could not be checked.");
+  }
+  if (existingEpoch) {
+    return jsonError(
+      409,
+      "conflict",
+      "This on-chain revenue epoch has already been recorded for this property.",
+    );
   }
 
   const { data: row, error: insertError } = await serviceClient
@@ -193,7 +211,7 @@ export async function POST(request: NextRequest) {
       distributable_revenue: input.amount,
       evidence_hash: input.evidenceHash,
       chain_tx_hash: input.txHash,
-      chain_epoch_id: epochLog.epochId.toString(10),
+      chain_epoch_id: chainEpochIdStr,
       chain_block_number: epochLog.blockNumber,
       // The claim deadline is read from the decoded event, never from the
       // request. It is the one column the client cannot influence, and leaving
@@ -207,7 +225,7 @@ export async function POST(request: NextRequest) {
 
   if (insertError) {
     if (isUniqueViolation(insertError)) {
-      return jsonError(409, "conflict", "This transaction has already been recorded.");
+      return jsonError(409, "conflict", "This transaction or revenue epoch has already been recorded.");
     }
     return jsonError(500, "insert_failed", "The revenue epoch could not be recorded.");
   }

@@ -203,11 +203,28 @@ create table if not exists public.revenue_epochs (
   constraint revenue_epochs_tx_hash_format
     check (chain_tx_hash ~ '^0x[0-9a-f]{64}$'),
   constraint revenue_epochs_one_per_period
-    unique (property_id, period)
+    unique (property_id, period),
+  constraint revenue_epochs_one_per_chain_epoch
+    unique (property_id, chain_epoch_id)
 );
 
 create index if not exists revenue_epochs_property_id_idx
   on public.revenue_epochs (property_id, created_at desc);
+
+create index if not exists revenue_epochs_property_epoch_idx
+  on public.revenue_epochs (property_id, chain_epoch_id);
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'revenue_epochs_one_per_chain_epoch'
+  ) then
+    alter table public.revenue_epochs
+      add constraint revenue_epochs_one_per_chain_epoch
+      unique (property_id, chain_epoch_id);
+  end if;
+end
+$$;
 
 comment on table public.revenue_epochs is
   'Cache/reference record of a revenue epoch already published on-chain. The backend never makes a distribution authoritative off-chain and never performs a wallet write.';

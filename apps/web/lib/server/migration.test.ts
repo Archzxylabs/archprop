@@ -294,6 +294,19 @@ describe("Migration DDL privilege regression tests (Static Schema Analysis)", ()
         /create\s+policy\s+revenue_epochs_select_public\s+on\s+public\.revenue_epochs\s+for\s+select\s+to\s+anon,\s*authenticated\s+using\s*\(\s*true\s*\);/i,
       );
     });
+
+    it("enforces unique constraints on revenue_epochs for period and chain_epoch_id to prevent replay", () => {
+      // Must enforce one epoch per period
+      expect(sql).toMatch(
+        /constraint\s+revenue_epochs_one_per_period\s+unique\s*\(\s*property_id\s*,\s*period\s*\)/i,
+      );
+      // Must enforce one epoch per verified on-chain epoch to prevent replay across periods
+      expect(sql).toMatch(
+        /constraint\s+revenue_epochs_one_per_chain_epoch\s+unique\s*\(\s*property_id\s*,\s*chain_epoch_id\s*\)/i,
+      );
+      // Must contain idempotent guard ensuring the constraint is added if rerun
+      expect(sql).toMatch(/conname\s*=\s*'revenue_epochs_one_per_chain_epoch'/i);
+    });
   });
 
   describe("Distinction between static and live integration tests", () => {
