@@ -1,12 +1,49 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, afterEach } from "vitest";
 import type { PublicClient } from "viem";
 import {
   deriveOfferingForAsset,
+  describeOfferingEconomicsMismatch,
   fetchAttestationRecords,
   fetchInvestorState,
+  fetchOfferingById,
+  getArchpropPublicClient,
   getClientChainConfig,
   inspectClientChainConfig,
+  resetClientChainCaches,
 } from "./chain-client";
+
+const CONFIG_ENV_KEYS = [
+  "NEXT_PUBLIC_ARBITRUM_SEPOLIA_RPC_URL",
+  "NEXT_PUBLIC_ARCHPROP_REGISTRY_ADDRESS",
+  "NEXT_PUBLIC_IDENTITY_REGISTRY_ADDRESS",
+  "NEXT_PUBLIC_MOCK_IDR_ADDRESS",
+  "NEXT_PUBLIC_OFFERING_ESCROW_ADDRESS",
+  "NEXT_PUBLIC_REVENUE_DISTRIBUTOR_ADDRESS",
+] as const;
+
+const VALID_ENV: Record<(typeof CONFIG_ENV_KEYS)[number], string> = {
+  NEXT_PUBLIC_ARBITRUM_SEPOLIA_RPC_URL: "https://sepolia-rollup.arbitrum.io/rpc",
+  NEXT_PUBLIC_ARCHPROP_REGISTRY_ADDRESS: "0x1111111111111111111111111111111111111111",
+  NEXT_PUBLIC_IDENTITY_REGISTRY_ADDRESS: "0x2222222222222222222222222222222222222222",
+  NEXT_PUBLIC_MOCK_IDR_ADDRESS: "0x3333333333333333333333333333333333333333",
+  NEXT_PUBLIC_OFFERING_ESCROW_ADDRESS: "0x4444444444444444444444444444444444444444",
+  NEXT_PUBLIC_REVENUE_DISTRIBUTOR_ADDRESS: "0x5555555555555555555555555555555555555555",
+};
+
+function snapshotEnv(): Record<string, string | undefined> {
+  return Object.fromEntries(CONFIG_ENV_KEYS.map((key) => [key, process.env[key]]));
+}
+
+function restoreEnv(snapshot: Record<string, string | undefined>): void {
+  for (const key of CONFIG_ENV_KEYS) {
+    const value = snapshot[key];
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  }
+}
 
 describe("chain-client configuration", () => {
   it("returns null from getClientChainConfig when environment is missing or empty", () => {
@@ -328,5 +365,205 @@ describe("fetchAttestationRecords", () => {
 
     expect(records.ownership).toBeNull();
     expect(records.valuation).toBeNull();
+  });
+});
+
+describe("chain-client configuration stability (refresh stability regression)", () => {
+  const savedEnv = snapshotEnv();
+
+  afterEach(() => {
+    restoreEnv(savedEnv);
+    resetClientChainCaches();
+  });
+
+  it("returns the identical config object across calls while the environment is unchanged", () => {
+    for (const [key, value] of Object.entries(VALID_ENV)) {
+      process.env[key] = value;
+    }
+    resetClientChainCaches();
+
+    const first = getClientChainConfig();
+    const second = getClientChainConfig();
+    const third = getClientChainConfig();
+
+    expect(first).not.toBeNull();
+    // Identical reference: a callback with the config in its dependency list
+    // keeps one stable value instead of re-running on every render.
+    expect(second).toBe(first);
+    expect(third).toBe(first);
+    expect(inspectClientChainConfig()).toBe(inspectClientChainConfig());
+  });
+
+  it("returns a new config object after an environment variable changes", () => {
+    for (const [key, value] of Object.entries(VALID_ENV)) {
+      process.env[key] = value;
+    }
+    resetClientChainCaches();
+
+    const before = getClientChainConfig();
+    expect(before).not.toBeNull();
+
+    process.env.NEXT_PUBLIC_OFFERING_ESCROW_ADDRESS =
+      "0x9999999999999999999999999999999999999999";
+
+    const after = getClientChainConfig();
+    expect(after).not.toBeNull();
+    expect(after).not.toBe(before);
+    expect(after?.addresses.offeringEscrow).toBe(
+      "0x9999999999999999999999999999999999999999",
+    );
+  });
+
+  it("reuses one public client per configuration instead of allocating per render", () => {
+    for (const [key, value] of Object.entries(VALID_ENV)) {
+      process.env[key] = value;
+    }
+    resetClientChainCaches();
+
+    const config = getClientChainConfig();
+    expect(config).not.toBeNull();
+    expect(getArchpropPublicClient(config!)).toBe(getArchpropPublicClient(config!));
+  });
+});
+
+describe("fetchOfferingById status decoding (fail closed)", () => {
+  const escrowAddress = "0x4444444444444444444444444444444444444444" as const;
+  const registryAddress = "0x1111111111111111111111111111111111111111" as const;
+  const mockIdrAddress = "0x3333333333333333333333333333333333333333" as const;
+  const propertyTokenAddress = "0x7777777777777777777777777777777777777777" as const;
+  const canonicalAssetId =
+    "0x1756428cf9ce005285ddcf87c75240c798535bed95c6aeca6a5a7d3eb7b364ae" as const;
+
+  const addresses = {
+    offeringEscrow: escrowAddress,
+    registry: registryAddress,
+    mockIdr: mockIdrAddress,
+  };
+
+  function clientReturning(overrides: Record<string, unknown>): PublicClient {
+    return {
+      getLogs: vi.fn(async () => [
+        {
+          args: {
+            offeringId: 1n,
+            assetId: canonicalAssetId,
+            token: propertyTokenAddress,
+            target: 3_000_000_000n,
+            tokenPrice: 10_000n,
+            deadline: 1_800_000_000n,
+          },
+        },
+      ]),
+      readContract: vi.fn(async (params: { functionName: string }) => {
+        if (params.functionName === "getOffering") {
+          return {
+            assetId: canonicalAssetId,
+            propertyToken: propertyTokenAddress,
+            paymentToken: mockIdrAddress,
+            target: 3_000_000_000n,
+            tokenPrice: 10_000n,
+            deadline: 1_800_000_000n,
+            raised: 0n,
+            issuerTreasury: "0x8888888888888888888888888888888888888888",
+            status: 0,
+            fundsReleased: false,
+            ...overrides,
+          };
+        }
+        if (params.functionName === "assetToken") {
+          return propertyTokenAddress;
+        }
+        throw new Error(`Unexpected contract call: ${params.functionName}`);
+      }),
+    } as unknown as PublicClient;
+  }
+
+  it("throws on an unknown offering status instead of reporting it as FAILED", async () => {
+    const client = clientReturning({ status: 7 });
+
+    await expect(fetchOfferingById(client, addresses, 1n)).rejects.toThrow(
+      /Unknown OfferingStatus value 7/,
+    );
+    await expect(
+      deriveOfferingForAsset(client, addresses, canonicalAssetId),
+    ).rejects.toThrow(/Unknown OfferingStatus value 7/);
+  });
+
+  it("throws on a status above the frozen enum range instead of guessing", async () => {
+    const client = clientReturning({ status: 99 });
+
+    await expect(fetchOfferingById(client, addresses, 1n)).rejects.toThrow(
+      /Refusing to guess a state/,
+    );
+  });
+
+  it("still decodes every in-range status to its frozen name", async () => {
+    const expected = ["OPEN", "FUNDED", "FAILED"] as const;
+    for (const [index, name] of expected.entries()) {
+      const client = clientReturning({ status: index });
+      const offering = await fetchOfferingById(client, addresses, 1n);
+      expect(offering.status).toBe(name);
+      expect(offering.statusCode).toBe(index);
+    }
+  });
+
+  it("rejects an offering whose token price is not positive", async () => {
+    const client = clientReturning({ tokenPrice: 0n });
+
+    await expect(fetchOfferingById(client, addresses, 1n)).rejects.toThrow(
+      /non-positive token price/,
+    );
+  });
+
+  it("rejects an offering whose raised amount exceeds its target", async () => {
+    const client = clientReturning({ raised: 4_000_000_000n });
+
+    await expect(fetchOfferingById(client, addresses, 1n)).rejects.toThrow(
+      /above its target/,
+    );
+  });
+});
+
+describe("describeOfferingEconomicsMismatch", () => {
+  const live = {
+    tokenPrice: 10_000n,
+    target: 3_000_000_000n,
+    raised: 0n,
+  };
+
+  it("returns null when the live economics match the displayed constants", () => {
+    expect(
+      describeOfferingEconomicsMismatch(live, {
+        tokenPrice: 10_000n,
+        offeringTarget: 3_000_000_000n,
+      }),
+    ).toBeNull();
+  });
+
+  it("reports a token price the chain does not agree with", () => {
+    const message = describeOfferingEconomicsMismatch(live, { tokenPrice: 20_000n });
+    expect(message).toContain("Live offering token price is 10000 mIDR");
+    expect(message).toContain("this page displays 20000 mIDR");
+  });
+
+  it("reports a target the chain does not agree with", () => {
+    const message = describeOfferingEconomicsMismatch(live, {
+      offeringTarget: 1_000_000_000n,
+    });
+    expect(message).toContain("Live offering target is 3000000000 mIDR");
+  });
+
+  it("reports a price mismatch before a target mismatch when both differ", () => {
+    const message = describeOfferingEconomicsMismatch(live, {
+      tokenPrice: 1n,
+      offeringTarget: 1n,
+    });
+    expect(message).toContain("token price");
+  });
+
+  it("returns null when there is nothing to compare against", () => {
+    expect(describeOfferingEconomicsMismatch(null, { tokenPrice: 1n })).toBeNull();
+    expect(describeOfferingEconomicsMismatch(live, null)).toBeNull();
+    expect(describeOfferingEconomicsMismatch(live, {})).toBeNull();
   });
 });

@@ -1,8 +1,13 @@
 import {
   loadChainConfig,
   inspectChainConfig,
+  decodeOfferingStatus,
+  CONTRACT_KEYS,
+  CONTRACT_ADDRESS_ENV,
+  RPC_URL_ENV,
   type ChainConfig,
   type ChainConfigReport,
+  type OfferingStatus,
   archpropRegistryAbi,
   identityRegistryAbi,
   offeringEscrowAbi,
@@ -18,47 +23,125 @@ import {
 } from "viem";
 import type { AssetId } from "@archprop/shared";
 
+export type { ChainConfig, ChainConfigReport, OfferingStatus };
+
+/**
+ * The contract addresses this client needs. `ChainConfig["addresses"]` is a
+ * structural superset, so callers can pass the loaded configuration directly.
+ */
+export interface ChainAddressSet {
+  registry: Address;
+  identityRegistry: Address;
+  mockIdr: Address;
+  offeringEscrow: Address;
+}
+
+/** Addresses needed to locate and price an offering. */
+export type OfferingReadAddresses = Pick<
+  ChainAddressSet,
+  "offeringEscrow" | "registry" | "mockIdr"
+>;
+
+/** Addresses needed to read one investor's position. */
+export type InvestorReadAddresses = Pick<
+  ChainAddressSet,
+  "identityRegistry" | "mockIdr" | "offeringEscrow"
+>;
+
 /**
  * Reads public chain environment variables safely in both browser and server runtimes.
  * Does not throw; returns null when incomplete or malformed.
  */
-export function getClientChainConfig(): ChainConfig | null {
-  const env: NodeJS.ProcessEnv = {
+function readClientEnv(): NodeJS.ProcessEnv {
+  return {
     NODE_ENV: (process.env.NODE_ENV as "development" | "production" | "test" | undefined) ?? "development",
-    NEXT_PUBLIC_ARBITRUM_SEPOLIA_RPC_URL: process.env.NEXT_PUBLIC_ARBITRUM_SEPOLIA_RPC_URL,
-    NEXT_PUBLIC_ARCHPROP_REGISTRY_ADDRESS: process.env.NEXT_PUBLIC_ARCHPROP_REGISTRY_ADDRESS,
-    NEXT_PUBLIC_IDENTITY_REGISTRY_ADDRESS: process.env.NEXT_PUBLIC_IDENTITY_REGISTRY_ADDRESS,
-    NEXT_PUBLIC_MOCK_IDR_ADDRESS: process.env.NEXT_PUBLIC_MOCK_IDR_ADDRESS,
-    NEXT_PUBLIC_OFFERING_ESCROW_ADDRESS: process.env.NEXT_PUBLIC_OFFERING_ESCROW_ADDRESS,
-    NEXT_PUBLIC_REVENUE_DISTRIBUTOR_ADDRESS: process.env.NEXT_PUBLIC_REVENUE_DISTRIBUTOR_ADDRESS,
+    [RPC_URL_ENV]: process.env[RPC_URL_ENV],
+    [CONTRACT_ADDRESS_ENV.registry]: process.env[CONTRACT_ADDRESS_ENV.registry],
+    [CONTRACT_ADDRESS_ENV.identityRegistry]: process.env[CONTRACT_ADDRESS_ENV.identityRegistry],
+    [CONTRACT_ADDRESS_ENV.mockIdr]: process.env[CONTRACT_ADDRESS_ENV.mockIdr],
+    [CONTRACT_ADDRESS_ENV.offeringEscrow]: process.env[CONTRACT_ADDRESS_ENV.offeringEscrow],
+    [CONTRACT_ADDRESS_ENV.revenueDistributor]: process.env[CONTRACT_ADDRESS_ENV.revenueDistributor],
   };
+}
 
-  try {
-    return loadChainConfig(env);
-  } catch {
-    return null;
+/**
+ * Identity of the current public configuration.
+ *
+ * `getClientChainConfig` returns the *same object* for as long as this
+ * fingerprint is unchanged. A hook that puts the config in a `useCallback`
+ * dependency list therefore keeps one stable reference across renders instead
+ * of re-running its effect on every render.
+ */
+function clientConfigFingerprint(env: NodeJS.ProcessEnv): string {
+  return [
+    env[RPC_URL_ENV] ?? "",
+    ...CONTRACT_KEYS.map((key) => env[CONTRACT_ADDRESS_ENV[key]] ?? ""),
+  ].join("\n");
+}
+
+let configCache: { fingerprint: string; config: ChainConfig | null } | null = null;
+let reportCache: { fingerprint: string; report: ChainConfigReport } | null = null;
+let publicClientCache: { key: string; client: PublicClient } | null = null;
+
+/**
+ * Drops every memoized configuration and client.
+ *
+ * Production code never needs this; tests use it to prove that memoization
+ * follows the environment rather than leaking a stale value.
+ */
+export function resetClientChainCaches(): void {
+  configCache = null;
+  reportCache = null;
+  publicClientCache = null;
+}
+
+/**
+ * Returns a referentially stable, validated chain configuration.
+ *
+ * Repeated calls with an unchanged environment return the identical object, so
+ * the value is safe to use as a React effect/callback dependency.
+ */
+export function getClientChainConfig(): ChainConfig | null {
+  const env = readClientEnv();
+  const fingerprint = clientConfigFingerprint(env);
+  if (configCache && configCache.fingerprint === fingerprint) {
+    return configCache.config;
   }
+
+  let config: ChainConfig | null;
+  try {
+    config = loadChainConfig(env);
+  } catch {
+    config = null;
+  }
+  configCache = { fingerprint, config };
+  return config;
 }
 
 /**
  * Returns a report of all missing or invalid configuration variables.
+ * Memoized on the same fingerprint as `getClientChainConfig`.
  */
 export function inspectClientChainConfig(): ChainConfigReport {
-  const env: NodeJS.ProcessEnv = {
-    NODE_ENV: (process.env.NODE_ENV as "development" | "production" | "test" | undefined) ?? "development",
-    NEXT_PUBLIC_ARBITRUM_SEPOLIA_RPC_URL: process.env.NEXT_PUBLIC_ARBITRUM_SEPOLIA_RPC_URL,
-    NEXT_PUBLIC_ARCHPROP_REGISTRY_ADDRESS: process.env.NEXT_PUBLIC_ARCHPROP_REGISTRY_ADDRESS,
-    NEXT_PUBLIC_IDENTITY_REGISTRY_ADDRESS: process.env.NEXT_PUBLIC_IDENTITY_REGISTRY_ADDRESS,
-    NEXT_PUBLIC_MOCK_IDR_ADDRESS: process.env.NEXT_PUBLIC_MOCK_IDR_ADDRESS,
-    NEXT_PUBLIC_OFFERING_ESCROW_ADDRESS: process.env.NEXT_PUBLIC_OFFERING_ESCROW_ADDRESS,
-    NEXT_PUBLIC_REVENUE_DISTRIBUTOR_ADDRESS: process.env.NEXT_PUBLIC_REVENUE_DISTRIBUTOR_ADDRESS,
-  };
+  const env = readClientEnv();
+  const fingerprint = clientConfigFingerprint(env);
+  if (reportCache && reportCache.fingerprint === fingerprint) {
+    return reportCache.report;
+  }
 
-  return inspectChainConfig(env);
+  const report = inspectChainConfig(env);
+  reportCache = {
+    fingerprint,
+    report: { ok: report.ok, errors: report.errors, warnings: report.warnings },
+  };
+  return reportCache.report;
 }
 
 /**
- * Builds a read-only viem public client for Arbitrum Sepolia.
+ * Builds (or reuses) the read-only viem public client for Arbitrum Sepolia.
+ *
+ * One client instance is shared per RPC URL so repeated renders and refreshes
+ * do not allocate a new transport each time.
  */
 export function getArchpropPublicClient(config?: ChainConfig): PublicClient {
   const resolvedConfig = config ?? getClientChainConfig();
@@ -67,10 +150,17 @@ export function getArchpropPublicClient(config?: ChainConfig): PublicClient {
     throw new Error(`Chain configuration unavailable: ${report.errors.join("; ")}`);
   }
 
-  return createPublicClient({
+  const key = `${resolvedConfig.chainId}:${resolvedConfig.rpcUrl}`;
+  if (publicClientCache && publicClientCache.key === key) {
+    return publicClientCache.client;
+  }
+
+  const client = createPublicClient({
     chain: arbitrumSepolia,
     transport: http(resolvedConfig.rpcUrl),
   });
+  publicClientCache = { key, client };
+  return client;
 }
 
 export interface DerivedOffering {
@@ -83,10 +173,103 @@ export interface DerivedOffering {
   deadline: bigint;
   raised: bigint;
   issuerTreasury: Address;
-  status: "OPEN" | "FUNDED" | "FAILED";
+  status: OfferingStatus;
   statusCode: number;
   fundsReleased: boolean;
   remainingCap: bigint;
+}
+
+/** Raw `OfferingView` as returned by the frozen `getOffering` ABI. */
+interface OfferingViewRaw {
+  assetId: Hex;
+  propertyToken: Address;
+  paymentToken: Address;
+  target: bigint;
+  tokenPrice: bigint;
+  deadline: bigint;
+  raised: bigint;
+  issuerTreasury: Address;
+  status: number;
+  fundsReleased: boolean;
+}
+
+/**
+ * Reads one offering by ID from `OfferingEscrow.getOffering` and validates it.
+ *
+ * The status is decoded with the frozen `@archprop/chain` decoder, so an
+ * unknown numeric status throws instead of being silently reported as `FAILED`.
+ * Asset, payment, and property-token addresses are all cross-checked, and the
+ * accounting is rejected when it is internally inconsistent.
+ */
+export async function fetchOfferingById(
+  client: PublicClient,
+  addresses: OfferingReadAddresses,
+  offeringId: bigint,
+  expectedAssetId?: AssetId | undefined,
+): Promise<DerivedOffering> {
+  const offeringRaw = (await client.readContract({
+    address: addresses.offeringEscrow,
+    abi: offeringEscrowAbi,
+    functionName: "getOffering",
+    args: [offeringId],
+  })) as OfferingViewRaw;
+
+  if (expectedAssetId && offeringRaw.assetId.toLowerCase() !== expectedAssetId.toLowerCase()) {
+    throw new Error(
+      `Escrow offering assetId mismatch: expected ${expectedAssetId}, got ${offeringRaw.assetId}`,
+    );
+  }
+
+  if (offeringRaw.paymentToken.toLowerCase() !== addresses.mockIdr.toLowerCase()) {
+    throw new Error(
+      `Escrow offering paymentToken mismatch: expected ${addresses.mockIdr}, got ${offeringRaw.paymentToken}`,
+    );
+  }
+
+  const linkedToken = (await client.readContract({
+    address: addresses.registry,
+    abi: archpropRegistryAbi,
+    functionName: "assetToken",
+    args: [offeringRaw.assetId],
+  })) as Address;
+
+  if (offeringRaw.propertyToken.toLowerCase() !== linkedToken.toLowerCase()) {
+    throw new Error(
+      `Escrow offering propertyToken mismatch: expected registry token ${linkedToken}, got ${offeringRaw.propertyToken}`,
+    );
+  }
+
+  if (offeringRaw.tokenPrice <= 0n) {
+    throw new Error(
+      `Escrow offering ${offeringId} reports a non-positive token price (${offeringRaw.tokenPrice}); refusing to quote an allocation.`,
+    );
+  }
+
+  if (offeringRaw.raised > offeringRaw.target) {
+    throw new Error(
+      `Escrow offering ${offeringId} reports raised ${offeringRaw.raised} above its target ${offeringRaw.target}; accounting is inconsistent.`,
+    );
+  }
+
+  // Throws UnknownEnumValueError for any value outside the frozen enum.
+  const status = decodeOfferingStatus(offeringRaw.status);
+
+  return {
+    offeringId,
+    assetId: offeringRaw.assetId,
+    propertyToken: offeringRaw.propertyToken,
+    paymentToken: offeringRaw.paymentToken,
+    target: offeringRaw.target,
+    tokenPrice: offeringRaw.tokenPrice,
+    deadline: offeringRaw.deadline,
+    raised: offeringRaw.raised,
+    issuerTreasury: offeringRaw.issuerTreasury,
+    status,
+    statusCode: Number(offeringRaw.status),
+    fundsReleased: offeringRaw.fundsReleased,
+    remainingCap:
+      offeringRaw.target > offeringRaw.raised ? offeringRaw.target - offeringRaw.raised : 0n,
+  };
 }
 
 /**
@@ -97,11 +280,7 @@ export interface DerivedOffering {
  */
 export async function deriveOfferingForAsset(
   client: PublicClient,
-  addresses: {
-    offeringEscrow: Address;
-    registry: Address;
-    mockIdr: Address;
-  },
+  addresses: OfferingReadAddresses,
   assetId: AssetId,
 ): Promise<DerivedOffering | null> {
   const logs = await client.getLogs({
@@ -137,74 +316,38 @@ export async function deriveOfferingForAsset(
     return null;
   }
 
-  const offeringRaw = (await client.readContract({
-    address: addresses.offeringEscrow,
-    abi: offeringEscrowAbi,
-    functionName: "getOffering",
-    args: [offeringId],
-  })) as {
-    assetId: Hex;
-    propertyToken: Address;
-    paymentToken: Address;
-    target: bigint;
-    tokenPrice: bigint;
-    deadline: bigint;
-    raised: bigint;
-    issuerTreasury: Address;
-    status: number;
-    fundsReleased: boolean;
-  };
+  return fetchOfferingById(client, addresses, offeringId, assetId);
+}
 
-  // Validate the returned offering asset ID
-  if (offeringRaw.assetId.toLowerCase() !== assetId.toLowerCase()) {
-    throw new Error(
-      `Escrow offering assetId mismatch: expected ${assetId}, got ${offeringRaw.assetId}`,
-    );
+export interface DisplayedOfferingConstants {
+  tokenPrice?: bigint | undefined;
+  offeringTarget?: bigint | undefined;
+}
+
+/**
+ * Explains how a live offering disagrees with the constants the UI displays,
+ * or returns `null` when they agree.
+ *
+ * Investment must never be priced from a display constant the chain does not
+ * agree with, so a caller either uses the live values or disables the action.
+ */
+export function describeOfferingEconomicsMismatch(
+  offering: Pick<DerivedOffering, "tokenPrice" | "target" | "raised"> | null | undefined,
+  displayed: DisplayedOfferingConstants | null | undefined,
+): string | null {
+  if (!offering || !displayed) {
+    return null;
   }
-
-  // Validate the returned payment token matches configured MockIDR
-  if (offeringRaw.paymentToken.toLowerCase() !== addresses.mockIdr.toLowerCase()) {
-    throw new Error(
-      `Escrow offering paymentToken mismatch: expected ${addresses.mockIdr}, got ${offeringRaw.paymentToken}`,
-    );
+  if (displayed.tokenPrice !== undefined && displayed.tokenPrice !== offering.tokenPrice) {
+    return `Live offering token price is ${offering.tokenPrice.toString()} mIDR but this page displays ${displayed.tokenPrice.toString()} mIDR.`;
   }
-
-  // Validate property token matches the registry's linked token
-  const linkedToken = (await client.readContract({
-    address: addresses.registry,
-    abi: archpropRegistryAbi,
-    functionName: "assetToken",
-    args: [assetId],
-  })) as Address;
-
-  if (offeringRaw.propertyToken.toLowerCase() !== linkedToken.toLowerCase()) {
-    throw new Error(
-      `Escrow offering propertyToken mismatch: expected registry token ${linkedToken}, got ${offeringRaw.propertyToken}`,
-    );
+  if (
+    displayed.offeringTarget !== undefined &&
+    displayed.offeringTarget !== offering.target
+  ) {
+    return `Live offering target is ${offering.target.toString()} mIDR but this page displays ${displayed.offeringTarget.toString()} mIDR.`;
   }
-
-  const statusCode = Number(offeringRaw.status);
-  const statusName: "OPEN" | "FUNDED" | "FAILED" =
-    statusCode === 0 ? "OPEN" : statusCode === 1 ? "FUNDED" : "FAILED";
-
-  const remainingCap =
-    offeringRaw.target > offeringRaw.raised ? offeringRaw.target - offeringRaw.raised : 0n;
-
-  return {
-    offeringId,
-    assetId,
-    propertyToken: offeringRaw.propertyToken,
-    paymentToken: offeringRaw.paymentToken,
-    target: offeringRaw.target,
-    tokenPrice: offeringRaw.tokenPrice,
-    deadline: offeringRaw.deadline,
-    raised: offeringRaw.raised,
-    issuerTreasury: offeringRaw.issuerTreasury,
-    status: statusName,
-    statusCode,
-    fundsReleased: offeringRaw.fundsReleased,
-    remainingCap,
-  };
+  return null;
 }
 
 export interface InvestorChainState {
@@ -221,11 +364,7 @@ export interface InvestorChainState {
  */
 export async function fetchInvestorState(
   client: PublicClient,
-  addresses: {
-    identityRegistry: Address;
-    mockIdr: Address;
-    offeringEscrow: Address;
-  },
+  addresses: InvestorReadAddresses,
   investorAddress: Address,
   offeringId: bigint,
 ): Promise<InvestorChainState> {
