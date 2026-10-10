@@ -9,7 +9,7 @@
 | Agent 1 — contracts | `agent/contracts` | `/tmp/archprop-worktrees/contracts` | `packages/contracts/**` | frontend, chain adapter, DB/API, root config, frozen docs |
 | Agent 2 — frontend | `agent/frontend` | `/tmp/archprop-worktrees/frontend` | `apps/web/app/**` except `apps/web/app/api/**`; `apps/web/components/**`, `apps/web/styles/**`, `apps/web/lib/client/**`, `apps/web/public/**` | API handlers/server code, contract ABI/method invention, migrations, root/shared config |
 | Agent 3 — backend/data | `agent/backend` | `/tmp/archprop-worktrees/backend` | `apps/web/app/api/**`, `apps/web/lib/server/**`, `supabase/**` | client UI, contract/chain code, root config |
-| Agent 4 — integration/QA | `agent/integration-qa` | `/tmp/archprop-worktrees/integration-qa` | `packages/chain/**`, `scripts/**`, `tests/e2e/**`, `docs/DEPLOYMENTS.md` | contract source, UI, API/migrations, live deployment |
+| Agent 4 — integration/QA | `agent/integration-qa-iq002` (current task; prior reviewed branch: `agent/integration-qa`) | `/tmp/archprop-worktrees/integration-qa` | `packages/chain/**`, `scripts/**`, `tests/e2e/**`, `docs/DEPLOYMENTS.md` | contract source, UI, API/migrations, live deployment |
 
 Shared files are read-only to agents: `package.json`, `pnpm-workspace.yaml`,
 lockfiles, `apps/web/package.json`, `apps/web/tsconfig.json`,
