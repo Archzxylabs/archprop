@@ -1,40 +1,106 @@
 import Link from "next/link";
 import type { AssetId } from "@archprop/shared";
+import { VILLA_NUSA } from "@archprop/shared";
 import { DemoDisclosure } from "@/components/demo-disclosure";
 import { ChainValue } from "@/components/chain-state";
 import { StatusBadge } from "@/components/status-badge";
 import { buildMarketplaceCards, findListing } from "@/lib/client/listings";
 import {
+  chainError,
+  chainReady,
   chainUnavailable,
   formatBps,
   formatWholeUnits,
   type ChainDataState,
   type FundingView,
 } from "@/lib/client/view-models";
+import {
+  deriveOfferingForAsset,
+  describeOfferingEconomicsMismatch,
+  getArchpropPublicClient,
+  getClientChainConfig,
+  inspectClientChainConfig,
+} from "@/lib/client/chain-client";
 
 /**
  * Marketplace listing.
  *
- * Funding is an escrow read. No wallet is connected in the FE-001 shell, so
- * every card renders the escrow's unavailable reason rather than a percentage:
- * the PRD's "72% funded" seed is what the chain will return once a read
- * exists, not a figure this screen invents.
+ * Funding is read from OfferingEscrow via public RPC when configuration is
+ * present, without requiring a connected wallet. Missing or invalid config
+ * or RPC errors show an unavailable or error state, never a fabricated balance,
+ * status, or funding percentage. Ubud/Lombok remain non-investable seed cards.
  */
 
-function readFundingUnavailable(assetId: AssetId): ChainDataState<FundingView> {
-  void assetId;
-  return chainUnavailable<FundingView>(
-    "Funding is read from the offering escrow once a wallet is connected.",
-  );
-}
+/**
+ * Rendered on every request.
+ *
+ * Funding and offering state are chain-authoritative, so the page is never
+ * frozen into a build-time static snapshot whose percentages would age into a
+ * false claim about the offering.
+ */
+export const dynamic = "force-dynamic";
 
 /** The published one-line summary for a listing, from its seed. */
 function listingSummary(externalId: string): string {
   return findListing(externalId)?.summary ?? "";
 }
 
-export default function MarketplacePage() {
-  const cards = buildMarketplaceCards(readFundingUnavailable);
+export default async function MarketplacePage() {
+  const config = getClientChainConfig();
+
+  let readFunding: (assetId: AssetId) => ChainDataState<FundingView>;
+  let villaNusaMismatch: string | null = null;
+
+  if (config) {
+    try {
+      const client = getArchpropPublicClient(config);
+      const villaNusaOffering = await deriveOfferingForAsset(
+        client,
+        config.addresses,
+        VILLA_NUSA.id,
+      );
+
+      villaNusaMismatch = describeOfferingEconomicsMismatch(villaNusaOffering, {
+        tokenPrice: VILLA_NUSA.tokenPrice,
+        offeringTarget: VILLA_NUSA.offeringTarget,
+      });
+
+      readFunding = (assetId: AssetId): ChainDataState<FundingView> => {
+        if (assetId.toLowerCase() === VILLA_NUSA.id.toLowerCase()) {
+          if (villaNusaOffering) {
+            const percentBps =
+              villaNusaOffering.target > 0n
+                ? Number((villaNusaOffering.raised * 10_000n) / villaNusaOffering.target)
+                : 0;
+            return chainReady({
+              raisedAmount: villaNusaOffering.raised,
+              targetAmount: villaNusaOffering.target,
+              percentBps,
+            });
+          }
+          return chainUnavailable("No confirmed offering found in OfferingEscrow for this asset.");
+        }
+        return chainUnavailable("Coming soon — no on-chain offering exists for this property.");
+      };
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      readFunding = () => chainError(`Failed to read from OfferingEscrow: ${reason}`);
+    }
+  } else {
+    const report = inspectClientChainConfig();
+    const reason =
+      report.errors.length > 0
+        ? `Chain configuration incomplete: ${report.errors.join("; ")}`
+        : "Chain configuration unavailable in this environment.";
+    readFunding = (assetId: AssetId) => {
+      if (assetId.toLowerCase() === VILLA_NUSA.id.toLowerCase()) {
+        return chainUnavailable(reason);
+      }
+      return chainUnavailable("Coming soon — no on-chain offering exists for this property.");
+    };
+  }
+
+  const cards = buildMarketplaceCards(readFunding);
 
   return (
     <div className="mx-auto w-full max-w-6xl px-5 py-10">
@@ -46,7 +112,8 @@ export default function MarketplacePage() {
         <p className="max-w-2xl text-sm leading-relaxed text-ink-muted">
           Every listing publishes its name, location, and verification state.
           Raised amount, funding progress, and balances are read from the
-          blockchain and are shown only once that read succeeds.
+          blockchain on every request and are shown only once that read
+          succeeds.
         </p>
       </header>
 
@@ -119,13 +186,31 @@ export default function MarketplacePage() {
                   <p className="ap-eyebrow">Funding</p>
                   <ChainValue state={card.funding} label="funding progress">
                     {(funding) => (
-                      <span className="ap-tabular text-sm font-semibold text-ink-strong">
-                        {formatBps(funding.percentBps)} ·{" "}
-                        {formatWholeUnits(funding.raisedAmount)} of{" "}
-                        {formatWholeUnits(funding.targetAmount)} mIDR
+                      <span className="flex flex-col gap-1">
+                        <span className="ap-tabular text-sm font-semibold text-ink-strong">
+                          {formatBps(funding.percentBps)} ·{" "}
+                          {formatWholeUnits(funding.raisedAmount)} of{" "}
+                          {formatWholeUnits(funding.targetAmount)} mIDR
+                        </span>
+                        {card.fundamentals &&
+                        funding.targetAmount !== card.fundamentals.offeringTarget ? (
+                          <span role="alert" className="text-xs font-medium text-critical">
+                            The live offering target (
+                            {formatWholeUnits(funding.targetAmount)} mIDR) differs from the
+                            published offering size (
+                            {formatWholeUnits(card.fundamentals.offeringTarget)} mIDR), so this
+                            listing cannot be invested in until the two agree.
+                          </span>
+                        ) : null}
                       </span>
                     )}
                   </ChainValue>
+                  {card.externalId === VILLA_NUSA.externalId && villaNusaMismatch ? (
+                    <p role="alert" className="mt-1 text-xs font-medium text-critical">
+                      {villaNusaMismatch} Investment is disabled for this listing until the
+                      live offering matches the published Villa Nusa constants.
+                    </p>
+                  ) : null}
                 </div>
 
                 {card.assetId ? (

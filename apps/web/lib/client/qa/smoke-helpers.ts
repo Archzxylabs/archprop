@@ -301,6 +301,18 @@ export function evaluateFocusExit(params: {
     };
   }
 
+  if (typeof isInsideContainer !== "boolean") {
+    return {
+      success: false,
+      activeTag: activeElement.tag,
+      activeId: activeElement.id,
+      activeText: activeElement.text,
+      isInsideContainer: true,
+      skippedDisabledButton: true,
+      failureReason: `Focus exit container containment could not be determined or was non-boolean (${String(isInsideContainer)})`,
+    };
+  }
+
   if (isInsideContainer === true) {
     return {
       success: false,

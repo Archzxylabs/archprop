@@ -5,6 +5,7 @@ import { useState } from "react";
 import type { ReactNode } from "react";
 import { VILLA_NUSA } from "@archprop/shared";
 import { EXPECTED_CHAIN_ID } from "@/lib/client/view-models";
+import { useWallet } from "@/lib/client/wallet-context";
 
 const NAV_ITEMS = [
   { href: "/marketplace", label: "Marketplace" },
@@ -25,16 +26,10 @@ const NAV_ITEMS = [
  * and whose panel is a labelled `<nav>` in both layouts. Showing the inline nav
  * from `sm` instead would collide with the wordmark and the wallet/network
  * labels around 640–900px.
- *
- * The wallet and network labels are revealed only where the inline nav is also
- * shown, so the header never has to squeeze a chip between the wordmark and the
- * menu trigger. Wallet status itself is rendered by the wallet connection area,
- * which FE-002 supplies. Until then the header shows the expected network and
- * states that no wallet is connected rather than rendering a fake address or
- * balance.
  */
 export function SiteHeader() {
   const [menuOpen, setMenuOpen] = useState(false);
+  const wallet = useWallet();
 
   return (
     <header className="sticky top-0 z-40 border-b border-line bg-surface/90 backdrop-blur supports-[backdrop-filter]:bg-surface/75">
@@ -82,9 +77,43 @@ export function SiteHeader() {
           <span className="hidden rounded-lg border border-line px-2.5 py-1.5 text-2xs font-medium text-ink-subtle xl:inline-flex">
             Arbitrum Sepolia · {EXPECTED_CHAIN_ID}
           </span>
-          <span className="hidden rounded-lg border border-line bg-surface-sunken px-3 py-1.5 text-xs font-semibold text-ink-subtle xl:inline-flex">
-            Wallet not connected
-          </span>
+          {wallet.isConnected && wallet.address ? (
+            <div className="hidden items-center gap-2 xl:inline-flex">
+              {wallet.isWrongNetwork ? (
+                <button
+                  type="button"
+                  onClick={wallet.switchChain}
+                  className="rounded-lg border border-critical bg-critical-soft px-2.5 py-1 text-2xs font-semibold text-critical hover:bg-critical-soft/80"
+                >
+                  Wrong Network
+                </button>
+              ) : null}
+              <span className="ap-hash rounded-lg border border-line bg-surface-sunken px-3 py-1.5 text-xs font-semibold text-ink-strong">
+                {wallet.address.slice(0, 6)}…{wallet.address.slice(-4)}
+              </span>
+              <button
+                type="button"
+                onClick={wallet.disconnect}
+                className="rounded-lg border border-line px-2.5 py-1 text-xs font-semibold text-ink-muted hover:bg-surface-sunken"
+              >
+                Disconnect
+              </button>
+            </div>
+          ) : (
+            <div className="hidden items-center gap-2 xl:inline-flex">
+              <span className="hidden rounded-lg border border-line bg-surface-sunken px-3 py-1.5 text-xs font-semibold text-ink-subtle xl:inline-flex">
+                Wallet not connected
+              </span>
+              <button
+                type="button"
+                onClick={wallet.connect}
+                disabled={wallet.isConnecting}
+                className="rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-ink-inverse hover:bg-brand-deep disabled:opacity-50"
+              >
+                {wallet.isConnecting ? "Connecting…" : "Connect"}
+              </button>
+            </div>
+          )}
 
           {/* Compact disclosure below `xl`, where the inline nav cannot fit. */}
           <button
@@ -117,6 +146,33 @@ export function SiteHeader() {
                 </Link>
               </li>
             ))}
+            {wallet.isConnected && wallet.address ? (
+              <li className="mt-2 border-t border-line pt-2">
+                <div className="flex items-center justify-between px-2 py-1">
+                  <span className="ap-hash text-xs font-semibold text-ink-strong">
+                    {wallet.address.slice(0, 6)}…{wallet.address.slice(-4)}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={wallet.disconnect}
+                    className="rounded-lg border border-line px-2.5 py-1 text-xs font-semibold text-ink-muted hover:bg-surface-sunken"
+                  >
+                    Disconnect
+                  </button>
+                </div>
+              </li>
+            ) : (
+              <li className="mt-2 border-t border-line pt-2">
+                <button
+                  type="button"
+                  onClick={wallet.connect}
+                  disabled={wallet.isConnecting}
+                  className="w-full rounded-lg bg-brand px-3 py-2 text-center text-xs font-semibold text-ink-inverse hover:bg-brand-deep disabled:opacity-50"
+                >
+                  {wallet.isConnecting ? "Connecting…" : "Connect Wallet"}
+                </button>
+              </li>
+            )}
           </ul>
         </nav>
       ) : null}

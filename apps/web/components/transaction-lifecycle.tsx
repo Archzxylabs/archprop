@@ -1,20 +1,23 @@
 "use client";
 
 import type { ReactNode } from "react";
-import type { Address } from "@archprop/shared";
-import { explorerTxUrl } from "@/lib/client/view-models";
-import type { TxLifecycleState } from "@/lib/client/view-models";
+import type { Address, TxHash } from "@archprop/shared";
+import { explorerTxUrl, formatWholeUnits } from "@/lib/client/view-models";
 import { DisabledActionHint } from "./chain-state";
 
 /**
  * Reusable transaction lifecycle UI.
  *
  * Presents `idle → awaiting-signature → submitted → confirming → confirmed |
- * failed` for a wallet write. It is purely presentational: the parent owns the
- * state, so an owner, verifier, or investor screen can reuse it unchanged.
+ * reverted | receipt-unknown | failed` for a wallet write. It is purely
+ * presentational: the parent owns the state, so an owner, verifier, or
+ * investor screen can reuse it unchanged.
  *
  * The component never asserts a phase its state does not carry, and never
- * renders a transaction link without a real hash.
+ * renders a transaction link without a real hash. When the state records which
+ * write it describes, that recorded action — not the button currently shown —
+ * names the result, so an approval can never read as an investment after the
+ * allowance refresh changes the label.
  */
 
 const PHASE_ORDER = [
@@ -30,18 +33,50 @@ const PHASE_LABELS: Record<string, string> = {
   submitted: "Submitted",
   confirming: "Confirming",
   confirmed: "Confirmed",
+  reverted: "Reverted",
+  "receipt-unknown": "Receipt unavailable",
   failed: "Failed",
 };
 
+/**
+ * The smallest shape this component needs.
+ *
+ * `TxLifecycleState` from the shared view models satisfies it, and the investor
+ * flow's richer state supplies the recorded action and amount.
+ */
+export interface TransactionLifecycleStateView {
+  phase: string;
+  txHash: TxHash | null;
+  error: string | null;
+  /** Which write produced this state, when the caller records one. */
+  action?: "approve" | "invest" | null | undefined;
+  /** Whole mIDR units this write moved, when the caller records one. */
+  amount?: bigint | null | undefined;
+}
+
 export interface TransactionLifecycleProps {
-  state: TxLifecycleState;
+  state: TransactionLifecycleStateView;
   /** Short name of the write, e.g. "Ownership attestation". */
   actionLabel: string;
   /** Contract or account the write targets, shown when known. */
-  target?: Address | null;
+  target?: Address | null | undefined;
   /** What the write accomplishes once confirmed, in plain language. */
-  successDescription?: string;
-  className?: string;
+  successDescription?: string | undefined;
+  className?: string | undefined;
+}
+
+/** Names a recorded investor write truthfully, independent of the current label. */
+function recordedActionName(
+  action: TransactionLifecycleStateView["action"],
+  fallback: string,
+): string {
+  if (action === "approve") {
+    return "mIDR approval";
+  }
+  if (action === "invest") {
+    return "Investment";
+  }
+  return fallback;
 }
 
 export function TransactionLifecycle({
@@ -54,22 +89,45 @@ export function TransactionLifecycle({
   const { phase, txHash, error } = state;
   const explorerUrl = explorerTxUrl(txHash);
   const activeIndex = PHASE_ORDER.indexOf(phase as (typeof PHASE_ORDER)[number]);
+  const actionName = recordedActionName(state.action, actionLabel);
+  const amountLabel =
+    state.amount !== null && state.amount !== undefined
+      ? `${formatWholeUnits(state.amount)} mIDR`
+      : null;
 
   return (
     <section
-      aria-label={`${actionLabel} transaction status`}
+      aria-label={`${actionName} transaction status`}
       className={`rounded-card border border-line bg-surface-sunken px-4 py-3 ${className}`}
     >
       <p className="ap-eyebrow">Transaction status</p>
 
       <p className="mt-1 text-sm font-semibold text-ink-strong" role="status" aria-live="polite">
-        {actionLabel}: {PHASE_LABELS[phase] ?? phase}
+        {actionName}: {PHASE_LABELS[phase] ?? phase}
       </p>
 
       {phase === "failed" ? (
         <p className="mt-1 text-xs leading-relaxed text-critical">
-          The transaction did not go through. {error ?? "No reason was returned by the wallet."}{" "}
-          No chain state has been changed by this attempt.
+          Nothing was sent to the chain. {error ?? "No reason was returned by the wallet."}{" "}
+          No transaction hash exists for this attempt and no chain state was
+          changed by it.
+        </p>
+      ) : null}
+
+      {phase === "reverted" ? (
+        <p className="mt-1 text-xs leading-relaxed text-critical">
+          The transaction was mined but reverted. {error ?? "The chain reported failure."}{" "}
+          The hash below is a real mined transaction; it recorded no approval
+          credit and no investment.
+        </p>
+      ) : null}
+
+      {phase === "receipt-unknown" ? (
+        <p className="mt-1 text-xs leading-relaxed text-ink-strong">
+          The wallet broadcast this transaction, but its receipt could not be
+          read. {error ?? "The chain returned no receipt."} The outcome is not
+          yet known: it may still confirm, so it is not reported as either
+          success or failure. Check the hash below before retrying.
         </p>
       ) : null}
 
@@ -119,6 +177,15 @@ export function TransactionLifecycle({
       </ol>
 
       <dl className="mt-3 grid gap-1 text-xs">
+        {state.action ? (
+          <div className="flex flex-wrap gap-x-2">
+            <dt className="text-ink-subtle">Write</dt>
+            <dd className="text-ink-muted">
+              {state.action === "approve" ? "MockIDR approve for OfferingEscrow" : "OfferingEscrow invest"}
+              {amountLabel ? ` · ${amountLabel}` : null}
+            </dd>
+          </div>
+        ) : null}
         <div className="flex flex-wrap gap-x-2">
           <dt className="text-ink-subtle">Transaction</dt>
           <dd className="ap-hash text-ink-muted">
@@ -155,11 +222,11 @@ export interface ActionButtonProps
   extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   /** What the write does, in plain language. */
   label: string;
-  tone?: "primary" | "secondary" | "danger";
+  tone?: "primary" | "secondary" | "danger" | undefined;
   /** True while a write is in flight. */
-  busy?: boolean;
+  busy?: boolean | undefined;
   /** The missing prerequisite, when the button is disabled. */
-  missingPrerequisite?: string;
+  missingPrerequisite?: string | undefined;
   children?: ReactNode;
 }
 

@@ -16,10 +16,23 @@ import { InvestmentPanel } from "@/components/investment-panel";
 import { findListing, findListingByAssetId } from "@/lib/client/listings";
 import {
   EXPECTED_CHAIN_ID,
+  chainError,
+  chainReady,
   chainUnavailable,
+  explorerAddressUrl,
   formatBps,
   formatWholeUnits,
+  type ChainDataState,
 } from "@/lib/client/view-models";
+import {
+  deriveOfferingForAsset,
+  fetchAttestationRecords,
+  getArchpropPublicClient,
+  getClientChainConfig,
+  inspectClientChainConfig,
+  type AttestationRecords,
+  type DerivedOffering,
+} from "@/lib/client/chain-client";
 
 /**
  * Property detail.
@@ -27,11 +40,11 @@ import {
  * The six sections appear in the order the PRD fixes: overview, verification,
  * economic rights, offering, on-chain proof, revenue.
  *
- * Verification cards, offering accounting, on-chain proof, and revenue are all
- * chain reads. The FE-001 shell has no adapter, so each one renders its
- * unavailable reason. Nothing on this page substitutes a static value for a
- * read that has not happened.
+ * Rendered on every request: lifecycle, attestation, and offering state are
+ * chain-authoritative, so a build-time static snapshot would age into a false
+ * claim about the offering.
  */
+export const dynamic = "force-dynamic";
 
 interface PageProps {
   params: Promise<{ assetId: string }>;
@@ -50,26 +63,65 @@ export default async function PropertyPage({ params }: PageProps) {
 
   const canonicalAssetId = listing.assetId as AssetId;
 
-  /**
-   * Verification records are attestation reads. No adapter means no records,
-   * and the section says so rather than showing an empty state that looks like
-   * a completed read.
-   */
-  const verificationState = chainUnavailable<never[]>(
-    "Attestation records are read from the attestation registry once a wallet is connected.",
-  );
-
-  const offeringState = chainUnavailable<{
+  const config = getClientChainConfig();
+  let verificationState: ChainDataState<AttestationRecords>;
+  let offeringState: ChainDataState<{
     raisedAmount: bigint;
     targetAmount: bigint;
     isFinalized: boolean;
     isReleased: boolean;
     isFailed: boolean;
-  }>("Offering accounting is read from the escrow contract once a wallet is connected.");
-
+  }>;
+  let derivedOffering: DerivedOffering | null = null;
   const revenueState = chainUnavailable<{ claimableAmount: bigint | null }>(
     "Revenue distributions are read from the revenue distributor once a wallet is connected.",
   );
+
+  if (config) {
+    try {
+      const client = getArchpropPublicClient(config);
+      const [attestations, offering] = await Promise.all([
+        fetchAttestationRecords(client, config.addresses.registry, canonicalAssetId),
+        deriveOfferingForAsset(client, config.addresses, canonicalAssetId),
+      ]);
+
+      derivedOffering = offering;
+
+      if (attestations.ownership || attestations.valuation) {
+        verificationState = chainReady(attestations);
+      } else {
+        verificationState = chainUnavailable(
+          "No confirmed attestations found on-chain for this asset.",
+        );
+      }
+
+      if (offering) {
+        offeringState = chainReady({
+          raisedAmount: offering.raised,
+          targetAmount: offering.target,
+          isFinalized: offering.status === "FUNDED",
+          isReleased: offering.fundsReleased,
+          isFailed: offering.status === "FAILED",
+        });
+      } else {
+        offeringState = chainUnavailable(
+          "No on-chain offering found in OfferingEscrow for this asset.",
+        );
+      }
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      verificationState = chainError(`Failed to read attestations: ${reason}`);
+      offeringState = chainError(`Failed to read offering accounting: ${reason}`);
+    }
+  } else {
+    const report = inspectClientChainConfig();
+    const reason =
+      report.errors.length > 0
+        ? `Chain configuration incomplete: ${report.errors.join("; ")}`
+        : "Chain configuration unavailable in this environment.";
+    verificationState = chainUnavailable(reason);
+    offeringState = chainUnavailable(reason);
+  }
 
   return (
     <div className="mx-auto w-full max-w-6xl px-4 sm:px-5 py-8 sm:py-10">
@@ -155,7 +207,47 @@ export default async function PropertyPage({ params }: PageProps) {
         </p>
 
         <div className="mt-4">
-          <ChainStateNotice state={verificationState} label="attestation records" />
+          <ChainValue state={verificationState} label="attestation records">
+            {(records) => (
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="rounded-card border border-line bg-surface p-4">
+                  <p className="ap-eyebrow">Ownership Attestation</p>
+                  {records.ownership ? (
+                    <div className="mt-2 flex flex-col gap-1 text-xs">
+                      <p className="text-brand font-semibold">✓ Confirmed On-Chain</p>
+                      <p className="text-ink-subtle">
+                        Verifier: <code className="ap-hash">{records.ownership.verifier}</code>
+                      </p>
+                      <p className="text-ink-subtle">
+                        Evidence: <code className="ap-hash">{records.ownership.evidenceHash}</code>
+                      </p>
+                    </div>
+                  ) : (
+                    <p className="mt-2 text-xs text-ink-muted">No valid ownership attestation submitted.</p>
+                  )}
+                </div>
+                <div className="rounded-card border border-line bg-surface p-4">
+                  <p className="ap-eyebrow">Valuation Attestation</p>
+                  {records.valuation ? (
+                    <div className="mt-2 flex flex-col gap-1 text-xs">
+                      <p className="text-brand font-semibold">✓ Confirmed On-Chain</p>
+                      <p className="text-ink-subtle">
+                        Verifier: <code className="ap-hash">{records.valuation.verifier}</code>
+                      </p>
+                      <p className="text-ink-subtle">
+                        Valuation: {formatWholeUnits(records.valuation.value)} mIDR
+                      </p>
+                      <p className="text-ink-subtle">
+                        Evidence: <code className="ap-hash">{records.valuation.evidenceHash}</code>
+                      </p>
+                    </div>
+                  ) : (
+                    <p className="mt-2 text-xs text-ink-muted">No valid valuation attestation submitted.</p>
+                  )}
+                </div>
+              </div>
+            )}
+          </ChainValue>
         </div>
       </section>
 
@@ -247,9 +339,13 @@ export default async function PropertyPage({ params }: PageProps) {
         {listing.fundamentals ? (
           <div className="mt-6">
             <InvestmentPanel
+              assetId={canonicalAssetId}
               tokenPrice={listing.fundamentals.tokenPrice}
               tokenSymbol={listing.fundamentals.tokenSymbol}
               offeringTarget={listing.fundamentals.offeringTarget}
+              remainingCap={derivedOffering?.remainingCap}
+              offeringId={derivedOffering?.offeringId}
+              offeringStatus={derivedOffering?.status}
               chainState={offeringState}
             />
           </div>
@@ -273,11 +369,24 @@ export default async function PropertyPage({ params }: PageProps) {
           </div>
           <div className="flex flex-col gap-0.5">
             <dt className="text-ink-subtle">Registry</dt>
-            <dd className="text-ink-muted">
-              Registry address unavailable — no validated contract address is
-              configured in this environment. Arbiscan links appear here once
-              chain configuration is wired (FE-002).
-            </dd>
+            {config ? (
+              <dd className="text-ink-muted flex flex-wrap items-center gap-2">
+                <code className="ap-hash">{config.addresses.registry}</code>
+                <a
+                  href={explorerAddressUrl(config.addresses.registry) ?? "#"}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-brand underline decoration-dotted"
+                >
+                  View on Arbiscan
+                </a>
+              </dd>
+            ) : (
+              <dd className="text-ink-muted">
+                Registry address unavailable — no validated contract address is
+                configured in this environment, so no Arbiscan link is offered.
+              </dd>
+            )}
           </div>
           <div className="flex flex-col gap-0.5">
             <dt className="text-ink-subtle">Network</dt>

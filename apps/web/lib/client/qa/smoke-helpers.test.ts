@@ -297,6 +297,25 @@ describe("smoke-helpers", () => {
       expect(result.failureReason).toContain("Focus remained inside the container");
     });
 
+    it("fails when isInsideContainer is missing or non-boolean", () => {
+      const resultUndefined = evaluateFocusExit({
+        activeElement: { tag: "A", id: "back-link", text: "← Back to your assets" },
+        isInsideContainer: undefined,
+        disabledButtonText: "Register property",
+      });
+      expect(resultUndefined.success).toBe(false);
+      expect(resultUndefined.failureReason).toContain("non-boolean (undefined)");
+
+      const resultNull = evaluateFocusExit({
+        activeElement: { tag: "A", id: "back-link", text: "← Back to your assets" },
+        // @ts-expect-error test non-boolean runtime value
+        isInsideContainer: null,
+        disabledButtonText: "Register property",
+      });
+      expect(resultNull.success).toBe(false);
+      expect(resultNull.failureReason).toContain("non-boolean (null)");
+    });
+
     it("passes when focus successfully moved outside and skipped disabled button", () => {
       const result = evaluateFocusExit({
         activeElement: { tag: "A", id: "back-link", text: "← Back to your assets" },

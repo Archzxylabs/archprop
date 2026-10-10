@@ -6,6 +6,7 @@ import {
   chainError,
   chainLoading,
   chainUnavailable,
+  formatWholeUnits,
 } from "@/lib/client/view-models";
 
 describe("PropertyDetailsForm component", () => {
@@ -164,6 +165,29 @@ describe("PropertyDetailsForm component", () => {
 describe("InvestmentPanel component", () => {
   const tokenPrice = 10_000n;
   const offeringTarget = 3_000_000_000n;
+  const investorAddress = "0x6666666666666666666666666666666666666666" as const;
+  const canonicalAssetId =
+    "0x1756428cf9ce005285ddcf87c75240c798535bed95c6aeca6a5a7d3eb7b364ae" as const;
+
+  /**
+   * A live OPEN offering whose economics match the displayed Villa Nusa
+   * constants, so the write boundary has nothing to block on.
+   */
+  const openOffering = {
+    offeringId: 1n,
+    assetId: canonicalAssetId,
+    propertyToken: "0x7777777777777777777777777777777777777777" as const,
+    paymentToken: "0x3333333333333333333333333333333333333333" as const,
+    target: offeringTarget,
+    tokenPrice,
+    deadline: 4_000_000_000n,
+    raised: 0n,
+    issuerTreasury: "0x8888888888888888888888888888888888888888" as const,
+    status: "OPEN" as const,
+    statusCode: 0,
+    fundsReleased: false,
+    remainingCap: offeringTarget,
+  };
 
   it("renders amount input in mIDR and clear demo-currency labels", () => {
     const html = renderToStaticMarkup(
@@ -226,7 +250,7 @@ describe("InvestmentPanel component", () => {
     expect(html).toContain("1 000 000 mIDR ÷ 10 000 mIDR per token = 100 AVNUSA");
   });
 
-  it("keeps transaction action disabled while no live wallet/chain adapter exists", () => {
+  it("keeps transaction action disabled while no investor wallet is connected", () => {
     const html = renderToStaticMarkup(
       <InvestmentPanel
         tokenPrice={tokenPrice}
@@ -238,7 +262,8 @@ describe("InvestmentPanel component", () => {
     expect(html).toContain("disabled");
     expect(html).toContain("Invest in AVNUSA");
     expect(html).toContain("connected investor wallet on Arbitrum Sepolia");
-    expect(html).toContain("live chain adapter pending FE-002");
+    expect(html).not.toContain("live chain adapter pending");
+    expect(html).not.toContain("No wallet signing is triggered");
   });
 
   it("presents unavailable chain state clearly", () => {
@@ -247,12 +272,12 @@ describe("InvestmentPanel component", () => {
         tokenPrice={tokenPrice}
         tokenSymbol="AVNUSA"
         offeringTarget={offeringTarget}
-        chainState={chainUnavailable("Escrow read pending wallet connection.")}
+        chainState={chainUnavailable("Offering read pending wallet connection.")}
       />,
     );
 
-    expect(html).toContain("Chain adapter status");
-    expect(html).toContain("Escrow read pending wallet connection.");
+    expect(html).toContain("Offering read:");
+    expect(html).toContain("Offering read pending wallet connection.");
   });
 
   it("presents loading chain state clearly", () => {
@@ -295,5 +320,479 @@ describe("InvestmentPanel component", () => {
     expect(html).not.toContain("Confirmed");
     expect(html).not.toContain("Success");
     expect(html).not.toContain("<h1");
+  });
+
+  it("presents Approve mIDR action when connected approved investor has insufficient allowance", () => {
+    const mockWallet = {
+      address: investorAddress,
+      chainId: 421614,
+      isConnected: true,
+      isConnecting: false,
+      isWrongNetwork: false,
+      error: null,
+      connect: async () => {},
+      disconnect: () => {},
+      switchChain: async () => {},
+      getWalletClient: () => null,
+    };
+
+    const mockFlow = {
+      offering: openOffering,
+      investor: {
+        address: investorAddress,
+        isApproved: true,
+        mIdrBalance: 50_000_000n,
+        allowance: 0n, // insufficient allowance
+        allocation: 0n,
+        payment: 0n,
+      },
+      isLoading: false,
+      isRefreshing: false,
+      txState: { phase: "idle" as const, action: null, amount: null, txHash: null, error: null },
+      error: null,
+      refresh: async () => {},
+      approve: async () => null,
+      invest: async () => null,
+      resetTx: () => {},
+    };
+
+    const html = renderToStaticMarkup(
+      <InvestmentPanel
+        tokenPrice={tokenPrice}
+        tokenSymbol="AVNUSA"
+        offeringTarget={offeringTarget}
+        customWallet={mockWallet}
+        customInvestorFlow={mockFlow}
+      />,
+    );
+
+    expect(html).toContain("Approve mIDR for Escrow");
+    expect(html).toContain("✓ Approved Investor");
+    expect(html).toContain("50 000 000 mIDR");
+    expect(html).not.toContain("disabled aria-busy");
+  });
+
+  it("presents Invest action when connected approved investor has sufficient allowance", () => {
+    const mockWallet = {
+      address: investorAddress,
+      chainId: 421614,
+      isConnected: true,
+      isConnecting: false,
+      isWrongNetwork: false,
+      error: null,
+      connect: async () => {},
+      disconnect: () => {},
+      switchChain: async () => {},
+      getWalletClient: () => null,
+    };
+
+    const mockFlow = {
+      offering: openOffering,
+      investor: {
+        address: investorAddress,
+        isApproved: true,
+        mIdrBalance: 50_000_000n,
+        allowance: 10_000_000n, // sufficient allowance
+        allocation: 100n,
+        payment: 1_000_000n,
+      },
+      isLoading: false,
+      isRefreshing: false,
+      txState: { phase: "idle" as const, action: null, amount: null, txHash: null, error: null },
+      error: null,
+      refresh: async () => {},
+      approve: async () => null,
+      invest: async () => null,
+      resetTx: () => {},
+    };
+
+    const html = renderToStaticMarkup(
+      <InvestmentPanel
+        tokenPrice={tokenPrice}
+        tokenSymbol="AVNUSA"
+        offeringTarget={offeringTarget}
+        customWallet={mockWallet}
+        customInvestorFlow={mockFlow}
+      />,
+    );
+
+    expect(html).toContain("Invest in AVNUSA");
+    expect(html).toContain("10 000 000 mIDR");
+  });
+
+  it("keeps action disabled with switch network prompt when wallet is on wrong chain", () => {
+    const mockWallet = {
+      address: investorAddress,
+      chainId: 1, // Mainnet
+      isConnected: true,
+      isConnecting: false,
+      isWrongNetwork: true,
+      error: null,
+      connect: async () => {},
+      disconnect: () => {},
+      switchChain: async () => {},
+      getWalletClient: () => null,
+    };
+
+    const html = renderToStaticMarkup(
+      <InvestmentPanel
+        tokenPrice={tokenPrice}
+        tokenSymbol="AVNUSA"
+        offeringTarget={offeringTarget}
+        customWallet={mockWallet}
+      />,
+    );
+
+    expect(html).toContain("disabled");
+    expect(html).toContain("Switch to Arbitrum Sepolia");
+    expect(html).toContain("connected to wrong network; switch to Arbitrum Sepolia (chain 421614)");
+  });
+
+  it("keeps action disabled when investor is unapproved in IdentityRegistry", () => {
+    const mockWallet = {
+      address: investorAddress,
+      chainId: 421614,
+      isConnected: true,
+      isConnecting: false,
+      isWrongNetwork: false,
+      error: null,
+      connect: async () => {},
+      disconnect: () => {},
+      switchChain: async () => {},
+      getWalletClient: () => null,
+    };
+
+    const mockFlow = {
+      offering: openOffering,
+      investor: {
+        address: investorAddress,
+        isApproved: false, // unapproved
+        mIdrBalance: 50_000_000n,
+        allowance: 10_000_000n,
+        allocation: 0n,
+        payment: 0n,
+      },
+      isLoading: false,
+      isRefreshing: false,
+      txState: { phase: "idle" as const, action: null, amount: null, txHash: null, error: null },
+      error: null,
+      refresh: async () => {},
+      approve: async () => null,
+      invest: async () => null,
+      resetTx: () => {},
+    };
+
+    const html = renderToStaticMarkup(
+      <InvestmentPanel
+        tokenPrice={tokenPrice}
+        tokenSymbol="AVNUSA"
+        offeringTarget={offeringTarget}
+        customWallet={mockWallet}
+        customInvestorFlow={mockFlow}
+      />,
+    );
+
+    expect(html).toContain("disabled");
+    expect(html).toContain("demo investor approval in IdentityRegistry");
+    expect(html).toContain("✗ Not Approved in IdentityRegistry");
+  });
+
+  it("keeps action disabled when investor has insufficient mIDR balance", () => {
+    const mockWallet = {
+      address: investorAddress,
+      chainId: 421614,
+      isConnected: true,
+      isConnecting: false,
+      isWrongNetwork: false,
+      error: null,
+      connect: async () => {},
+      disconnect: () => {},
+      switchChain: async () => {},
+      getWalletClient: () => null,
+    };
+
+    const mockFlow = {
+      offering: openOffering,
+      investor: {
+        address: investorAddress,
+        isApproved: true,
+        mIdrBalance: 500_000n, // less than default 1_000_000
+        allowance: 10_000_000n,
+        allocation: 0n,
+        payment: 0n,
+      },
+      isLoading: false,
+      isRefreshing: false,
+      txState: { phase: "idle" as const, action: null, amount: null, txHash: null, error: null },
+      error: null,
+      refresh: async () => {},
+      approve: async () => null,
+      invest: async () => null,
+      resetTx: () => {},
+    };
+
+    const html = renderToStaticMarkup(
+      <InvestmentPanel
+        tokenPrice={tokenPrice}
+        tokenSymbol="AVNUSA"
+        offeringTarget={offeringTarget}
+        customWallet={mockWallet}
+        customInvestorFlow={mockFlow}
+      />,
+    );
+
+    expect(html).toContain("disabled");
+    expect(html).toContain(
+      `an mIDR balance of at least ${formatWholeUnits(1_000_000n)} mIDR; this wallet holds ${formatWholeUnits(500_000n)} mIDR`,
+    );
+  });
+
+  it("displays real confirmed transaction hash and Arbiscan link upon receipt finality", () => {
+    const confirmedTxHash = "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890" as const;
+    const mockWallet = {
+      address: investorAddress,
+      chainId: 421614,
+      isConnected: true,
+      isConnecting: false,
+      isWrongNetwork: false,
+      error: null,
+      connect: async () => {},
+      disconnect: () => {},
+      switchChain: async () => {},
+      getWalletClient: () => null,
+    };
+
+    const mockFlow = {
+      offering: openOffering,
+      investor: {
+        address: investorAddress,
+        isApproved: true,
+        mIdrBalance: 50_000_000n,
+        allowance: 10_000_000n,
+        allocation: 100n,
+        payment: 1_000_000n,
+      },
+      isLoading: false,
+      isRefreshing: false,
+      txState: {
+        phase: "confirmed" as const,
+        action: "invest" as const,
+        amount: 1_000_000n,
+        txHash: confirmedTxHash,
+        error: null,
+      },
+      error: null,
+      refresh: async () => {},
+      approve: async () => null,
+      invest: async () => null,
+      resetTx: () => {},
+    };
+
+    const html = renderToStaticMarkup(
+      <InvestmentPanel
+        tokenPrice={tokenPrice}
+        tokenSymbol="AVNUSA"
+        offeringTarget={offeringTarget}
+        customWallet={mockWallet}
+        customInvestorFlow={mockFlow}
+      />,
+    );
+
+    expect(html).toContain("Receipt Confirmed");
+    expect(html).toContain("View on Arbiscan");
+    expect(html).toContain(`https://sepolia.arbiscan.io/tx/${confirmedTxHash}`);
+    // The recorded write names the result, not the current button label.
+    expect(html).toContain("Investment: Confirmed");
+    expect(html).toContain(
+      `The investment of ${formatWholeUnits(1_000_000n)} mIDR into OfferingEscrow is confirmed on-chain.`,
+    );
+    expect(html).not.toContain("mIDR approval: Confirmed");
+  });
+
+  it("labels an approval receipt as an approval after the allowance refresh flips the button", () => {
+    const confirmedTxHash =
+      "0x9999999999999999999999999999999999999999999999999999999999999999" as const;
+    const mockWallet = {
+      address: investorAddress,
+      chainId: 421614,
+      isConnected: true,
+      isConnecting: false,
+      isWrongNetwork: false,
+      error: null,
+      connect: async () => {},
+      disconnect: () => {},
+      switchChain: async () => {},
+      getWalletClient: () => null,
+    };
+
+    // The approval has landed, so the refreshed allowance now covers the amount
+    // and the current button label reads "Invest in AVNUSA". The receipt must
+    // still be reported as an approval.
+    const mockFlow = {
+      offering: openOffering,
+      investor: {
+        address: investorAddress,
+        isApproved: true,
+        mIdrBalance: 50_000_000n,
+        allowance: 1_000_000n,
+        allocation: 0n,
+        payment: 0n,
+      },
+      isLoading: false,
+      isRefreshing: false,
+      txState: {
+        phase: "confirmed" as const,
+        action: "approve" as const,
+        amount: 1_000_000n,
+        txHash: confirmedTxHash,
+        error: null,
+      },
+      error: null,
+      refresh: async () => {},
+      approve: async () => null,
+      invest: async () => null,
+      resetTx: () => {},
+    };
+
+    const html = renderToStaticMarkup(
+      <InvestmentPanel
+        tokenPrice={tokenPrice}
+        tokenSymbol="AVNUSA"
+        offeringTarget={offeringTarget}
+        customWallet={mockWallet}
+        customInvestorFlow={mockFlow}
+      />,
+    );
+
+    // The current action offered is investment…
+    expect(html).toContain("Invest in AVNUSA");
+    // …but the recorded write names the receipt truthfully.
+    expect(html).toContain("mIDR approval: Confirmed");
+    expect(html).not.toContain("Investment: Confirmed");
+    expect(html).toContain(
+      `The mIDR approval of ${formatWholeUnits(1_000_000n)} mIDR to OfferingEscrow is confirmed on-chain.`,
+    );
+    expect(html).toContain("it did not invest");
+    expect(html).toContain("MockIDR approve for OfferingEscrow");
+  });
+
+  it("never reports an approval as investment success for a reverted approval", () => {
+    const revertedTxHash =
+      "0x8888888888888888888888888888888888888888888888888888888888888888" as const;
+    const mockWallet = {
+      address: investorAddress,
+      chainId: 421614,
+      isConnected: true,
+      isConnecting: false,
+      isWrongNetwork: false,
+      error: null,
+      connect: async () => {},
+      disconnect: () => {},
+      switchChain: async () => {},
+      getWalletClient: () => null,
+    };
+
+    const mockFlow = {
+      offering: openOffering,
+      investor: {
+        address: investorAddress,
+        isApproved: true,
+        mIdrBalance: 50_000_000n,
+        allowance: 0n,
+        allocation: 0n,
+        payment: 0n,
+      },
+      isLoading: false,
+      isRefreshing: false,
+      txState: {
+        phase: "reverted" as const,
+        action: "approve" as const,
+        amount: 1_000_000n,
+        txHash: revertedTxHash,
+        error: "Approval transaction reverted on-chain.",
+      },
+      error: null,
+      refresh: async () => {},
+      approve: async () => null,
+      invest: async () => null,
+      resetTx: () => {},
+    };
+
+    const html = renderToStaticMarkup(
+      <InvestmentPanel
+        tokenPrice={tokenPrice}
+        tokenSymbol="AVNUSA"
+        offeringTarget={offeringTarget}
+        customWallet={mockWallet}
+        customInvestorFlow={mockFlow}
+      />,
+    );
+
+    expect(html).toContain("mIDR approval: Reverted");
+    expect(html).toContain(revertedTxHash);
+    expect(html).not.toContain(": Confirmed");
+    expect(html).not.toContain("Receipt Confirmed");
+  });
+
+  it("shows an unresolved broadcast as an unknown outcome that keeps its hash", () => {
+    const pendingTxHash =
+      "0x7777777777777777777777777777777777777777777777777777777777777777" as const;
+    const mockWallet = {
+      address: investorAddress,
+      chainId: 421614,
+      isConnected: true,
+      isConnecting: false,
+      isWrongNetwork: false,
+      error: null,
+      connect: async () => {},
+      disconnect: () => {},
+      switchChain: async () => {},
+      getWalletClient: () => null,
+    };
+
+    const mockFlow = {
+      offering: openOffering,
+      investor: {
+        address: investorAddress,
+        isApproved: true,
+        mIdrBalance: 50_000_000n,
+        allowance: 1_000_000n,
+        allocation: 0n,
+        payment: 0n,
+      },
+      isLoading: false,
+      isRefreshing: false,
+      txState: {
+        phase: "receipt-unknown" as const,
+        action: "invest" as const,
+        amount: 1_000_000n,
+        txHash: pendingTxHash,
+        error: "The investment was broadcast, but its receipt could not be read.",
+      },
+      error: null,
+      refresh: async () => {},
+      approve: async () => null,
+      invest: async () => null,
+      resetTx: () => {},
+    };
+
+    const html = renderToStaticMarkup(
+      <InvestmentPanel
+        tokenPrice={tokenPrice}
+        tokenSymbol="AVNUSA"
+        offeringTarget={offeringTarget}
+        customWallet={mockWallet}
+        customInvestorFlow={mockFlow}
+      />,
+    );
+
+    expect(html).toContain("Investment: Receipt unavailable");
+    expect(html).toContain(pendingTxHash);
+    expect(html).toContain("The outcome is not yet known");
+    expect(html).not.toContain(": Confirmed");
+    expect(html).not.toContain("Receipt Confirmed");
+    // The duplicate action stays disabled while the outcome is unresolved.
+    expect(html).toContain("disabled");
+    expect(html).toContain("a transaction outcome that the chain has not resolved yet");
   });
 });
