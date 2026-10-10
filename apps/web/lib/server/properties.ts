@@ -12,6 +12,10 @@
 
 import type { DocumentType, PresentationStatus } from "@archprop/shared";
 
+/** Public presentation columns for property queries and conditional updates. */
+export const PUBLIC_PROPERTY_COLUMNS =
+  "id, chain_asset_id, external_id, name, slug, property_type, location, issuer_name, description, indicative_value, offering_target, token_supply, token_price, economic_rights_bps, status_cache, token_address, created_at";
+
 export interface PropertyRow {
   id: string;
   chain_asset_id: string | null;

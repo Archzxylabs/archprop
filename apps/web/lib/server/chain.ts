@@ -161,4 +161,163 @@ export async function verifyRpcChainId(
   }
 }
 
+/** Exact event signature for AssetCreated from ArchpropRegistry. */
+export const ASSET_CREATED_EVENT = parseAbiItem(
+  "event AssetCreated(bytes32 indexed assetId, address indexed owner, bytes32 metadataHash)",
+);
+
+export interface AssetCreatedLog {
+  assetId: string;
+  owner: `0x${string}`;
+  metadataHash: string;
+  blockNumber: number;
+  logIndex: number;
+}
+
+/**
+ * Decodes AssetCreated logs in a receipt that belong to ArchpropRegistry and match assetId.
+ */
+export function decodeAssetCreatedLogs(
+  logs: readonly Log[],
+  registryAddress: string,
+  assetId: string,
+): AssetCreatedLog[] {
+  const results: AssetCreatedLog[] = [];
+  const wantedAsset = assetId.toLowerCase();
+  const wantedRegistry = registryAddress.toLowerCase();
+
+  for (const log of logs) {
+    if (log.address.toLowerCase() !== wantedRegistry) {
+      continue;
+    }
+    let decoded;
+    try {
+      decoded = decodeEventLog({
+        abi: [ASSET_CREATED_EVENT],
+        data: log.data,
+        topics: log.topics,
+      });
+    } catch {
+      continue;
+    }
+    if (decoded.eventName !== "AssetCreated") {
+      continue;
+    }
+    const args = decoded.args as {
+      assetId: string;
+      owner: `0x${string}`;
+      metadataHash: string;
+    };
+    if (args.assetId.toLowerCase() !== wantedAsset) {
+      continue;
+    }
+    results.push({
+      assetId: args.assetId,
+      owner: args.owner,
+      metadataHash: args.metadataHash,
+      blockNumber: Number(log.blockNumber ?? 0n),
+      logIndex: Number(log.logIndex ?? 0n),
+    });
+  }
+  return results;
+}
+
+/** ABI for reading asset state from ArchpropRegistry. */
+export const GET_ASSET_ABI = [
+  {
+    type: "function",
+    name: "getAsset",
+    stateMutability: "view",
+    inputs: [{ name: "assetId", type: "bytes32" }],
+    outputs: [
+      {
+        name: "asset",
+        type: "tuple",
+        components: [
+          { name: "owner", type: "address" },
+          { name: "metadataHash", type: "bytes32" },
+          { name: "agreementHash", type: "bytes32" },
+          { name: "status", type: "uint8" },
+          { name: "token", type: "address" },
+        ],
+      },
+    ],
+  },
+] as const;
+
+export interface RegistryAssetView {
+  owner: `0x${string}`;
+  metadataHash: `0x${string}`;
+  agreementHash: `0x${string}`;
+  status: number;
+  token: `0x${string}`;
+}
+
+export type RegistryAssetCheck =
+  | { ok: true; asset: RegistryAssetView }
+  | { ok: false; reason: "rpc_error" };
+
+/**
+ * Reads current asset state from ArchpropRegistry via getAsset(assetId).
+ */
+export async function fetchRegistryAsset(
+  readContract: (args: {
+    address: `0x${string}`;
+    abi: typeof GET_ASSET_ABI;
+    functionName: "getAsset";
+    args: readonly [`0x${string}`];
+  }) => Promise<unknown>,
+  registryAddress: string,
+  assetId: string,
+): Promise<RegistryAssetCheck> {
+  try {
+    const raw = (await readContract({
+      address: registryAddress as `0x${string}`,
+      abi: GET_ASSET_ABI,
+      functionName: "getAsset",
+      args: [assetId as `0x${string}`],
+    })) as
+      | {
+          owner: `0x${string}`;
+          metadataHash: `0x${string}`;
+          agreementHash: `0x${string}`;
+          status: number;
+          token: `0x${string}`;
+        }
+      | readonly [`0x${string}`, `0x${string}`, `0x${string}`, number, `0x${string}`];
+
+    if (Array.isArray(raw)) {
+      return {
+        ok: true,
+        asset: {
+          owner: raw[0],
+          metadataHash: raw[1],
+          agreementHash: raw[2],
+          status: Number(raw[3]),
+          token: raw[4],
+        },
+      };
+    }
+    const record = raw as {
+      owner: `0x${string}`;
+      metadataHash: `0x${string}`;
+      agreementHash: `0x${string}`;
+      status: number;
+      token: `0x${string}`;
+    };
+    return {
+      ok: true,
+      asset: {
+        owner: record.owner,
+        metadataHash: record.metadataHash,
+        agreementHash: record.agreementHash,
+        status: Number(record.status),
+        token: record.token,
+      },
+    };
+  } catch {
+    return { ok: false, reason: "rpc_error" };
+  }
+}
+
 export type { ChainConfig };

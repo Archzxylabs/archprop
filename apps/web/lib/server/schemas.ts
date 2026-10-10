@@ -137,3 +137,61 @@ export const revenueEpochSchema = z.object({
 });
 
 export type RevenueEpochInput = z.infer<typeof revenueEpochSchema>;
+
+/** 65-byte hex signature (0x + 130 hex characters). */
+const signatureHex = z
+  .string({ required_error: "signature is required" })
+  .regex(/^0x[0-9a-fA-F]{130}$/, "must be a 65-byte hex signature");
+
+/** Exact 32-byte hash/asset id (0x + 64 hex characters). */
+const bytes32Hex = z
+  .string({ required_error: "32-byte hex string is required" })
+  .regex(/^0x[0-9a-fA-F]{64}$/, "must be a 32-byte hex value");
+
+export const bindPropertyChainSchema = z
+  .object({
+    txHash: bytes32Hex,
+    chainAssetId: bytes32Hex,
+    signature: signatureHex,
+    issuedAtMs: z
+      .string({ required_error: "issuedAtMs is required" })
+      .refine(isCanonicalUnsignedInt, "must be a canonical base-10 unsigned integer string"),
+  })
+  .superRefine((val, ctx) => {
+    const parsed = parseCanonicalUnsignedInt(val.issuedAtMs);
+    if (parsed === null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["issuedAtMs"],
+        message: "must be a canonical base-10 unsigned integer string",
+      });
+      return;
+    }
+    const ms = Number(parsed);
+    if (!Number.isSafeInteger(ms)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["issuedAtMs"],
+        message: "timestamp exceeds safe integer range",
+      });
+      return;
+    }
+    const now = Date.now();
+    const TEN_MINUTES_MS = 10 * 60 * 1000;
+    const SIXTY_SECONDS_MS = 60 * 1000;
+    if (ms < now - TEN_MINUTES_MS) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["issuedAtMs"],
+        message: "timestamp is older than 10 minutes",
+      });
+    } else if (ms > now + SIXTY_SECONDS_MS) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["issuedAtMs"],
+        message: "timestamp is more than 60 seconds in the future",
+      });
+    }
+  });
+
+export type BindPropertyChainInput = z.infer<typeof bindPropertyChainSchema>;
