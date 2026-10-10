@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "next build --webpack",
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit -p tsconfig.json",
@@ -15,9 +15,9 @@
     "@archprop/chain": "workspace:*",
     "@archprop/shared": "workspace:*",
     "@supabase/supabase-js": "2.49.4",
-    "next": "16.0.0",
-    "react": "19.2.0",
-    "react-dom": "19.2.0",
+    "next": "16.4.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
     "viem": "2.38.0",
     "wagmi": "2.19.0",
     "zod": "3.24.1"
@@ -29,7 +29,7 @@
     "@types/react-dom": "19.0.3",
     "@vitejs/plugin-react": "4.4.1",
     "eslint": "9.19.0",
-    "eslint-config-next": "16.0.0",
+    "eslint-config-next": "16.4.0",
     "tailwindcss": "4.3.3",
     "vitest": "3.0.5"
   }
