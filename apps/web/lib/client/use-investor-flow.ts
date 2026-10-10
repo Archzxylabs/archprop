@@ -89,6 +89,64 @@ export function isInvestorTxPending(phase: InvestorTxPhase): boolean {
   );
 }
 
+/**
+ * Whether a transaction state may be reset to idle.
+ *
+ * An unresolved broadcast or in-flight write (awaiting-signature, submitted,
+ * confirming, receipt-unknown) must NOT be cleared, as that would discard
+ * the transaction hash and unlock an unsafe retry while the first outcome is
+ * still unresolved on chain. Only resolved states (confirmed, reverted,
+ * pre-broadcast failed, or idle) can be reset.
+ */
+export function canResetInvestorTx(phase: InvestorTxPhase): boolean {
+  return !isInvestorTxPending(phase);
+}
+
+/**
+ * Pure state reducer for resetTx.
+ *
+ * Leaves unresolved states (pending or receipt-unknown) completely intact,
+ * preserving their action, amount, phase, hash, and error.
+ * Only resets to initialInvestorTxState when the receipt is actually known
+ * (confirmed or reverted) or when a pre-broadcast failure occurred.
+ */
+export function reduceResetTxState(currentState: InvestorTxState): InvestorTxState {
+  if (!canResetInvestorTx(currentState.phase)) {
+    return currentState;
+  }
+  return initialInvestorTxState;
+}
+
+/**
+ * Evaluates whether an investor write attempt can proceed.
+ *
+ * Returns canProceed: false when another write is in flight or when the current
+ * transaction has an unresolved chain outcome (awaiting-signature, submitted,
+ * confirming, or receipt-unknown).
+ */
+export function evaluateInvestorWriteGuard(input: {
+  isWriteInFlight: boolean;
+  txPhase: InvestorTxPhase;
+}): { canProceed: boolean; reason: string | null } {
+  if (input.isWriteInFlight || isInvestorTxPending(input.txPhase)) {
+    return {
+      canProceed: false,
+      reason: "Another transaction for this wallet is still awaiting a chain outcome.",
+    };
+  }
+  return { canProceed: true, reason: null };
+}
+
+/**
+ * Pure state transition for a rejected duplicate write attempt.
+ *
+ * A rejected duplicate attempt must leave the original action, amount, phase,
+ * hash, and error completely unchanged.
+ */
+export function reduceDuplicateWriteAttempt(currentState: InvestorTxState): InvestorTxState {
+  return currentState;
+}
+
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -815,7 +873,7 @@ export function useInvestorFlow(options: UseInvestorFlowOptions = {}): UseInvest
   }, [refresh]);
 
   const resetTx = useCallback(() => {
-    setTxState(initialInvestorTxState);
+    setTxState((current) => reduceResetTxState(current));
   }, []);
 
   /**
@@ -1011,17 +1069,20 @@ export function useInvestorFlow(options: UseInvestorFlowOptions = {}): UseInvest
    * React re-renders, and the phase check covers a broadcast that was left with
    * an unresolved receipt. Either one makes a duplicate action a no-op instead
    * of a second on-chain write.
+   *
+   * Crucially, a rejected duplicate attempt leaves the original action, amount,
+   * phase, hash, and error completely unchanged, and never invokes performWrite.
    */
   const runWrite = useCallback(
     async (action: InvestorWriteAction, amount: bigint): Promise<TxHash | null> => {
-      if (pendingWriteRef.current || isInvestorTxPending(txStateRef.current.phase)) {
-        setTxState({
-          phase: "failed",
-          action,
-          amount,
-          txHash: null,
-          error: "Another transaction for this wallet is still awaiting a chain outcome.",
-        });
+      const guard = evaluateInvestorWriteGuard({
+        isWriteInFlight: pendingWriteRef.current,
+        txPhase: txStateRef.current.phase,
+      });
+
+      if (!guard.canProceed) {
+        // A rejected duplicate attempt leaves original state completely intact.
+        // It must never call setTxState or simulateContract/writeContract.
         return null;
       }
 

@@ -7,13 +7,18 @@ import {
   SimulationFailedError,
   StaleReadGuard,
   TransactionRevertedError,
+  canResetInvestorTx,
   deriveInvestorAction,
+  evaluateInvestorWriteGuard,
   evaluateWriteBoundary,
   executeApproveTransaction,
   executeInvestTransaction,
   loadInvestorSnapshot,
   mapWriteErrorToTxState,
+  reduceDuplicateWriteAttempt,
+  reduceResetTxState,
   type InvestorSnapshot,
+  type InvestorTxState,
 } from "./use-investor-flow";
 
 const INVESTOR_A = "0x6666666666666666666666666666666666666666" as const;
@@ -854,5 +859,166 @@ describe("deriveInvestorAction (amount-dependent allowance)", () => {
     expect(deriveInvestorAction(investorState(INVESTOR_A, { allowance: 1_000_000n }), 10_000_000n)).toBe(
       "approve",
     );
+  });
+});
+
+describe("duplicate write rejection and reset safety (FE-002D-CORRECTION-2)", () => {
+  const dummyTxHash = "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890" as const;
+
+  it("blocks duplicate click while a write is in flight and preserves state", () => {
+    const inFlightState: InvestorTxState = {
+      phase: "awaiting-signature",
+      action: "invest",
+      amount: 10_000_000n,
+      txHash: null,
+      error: null,
+    };
+
+    const guard = evaluateInvestorWriteGuard({
+      isWriteInFlight: true,
+      txPhase: inFlightState.phase,
+    });
+
+    expect(guard.canProceed).toBe(false);
+    expect(guard.reason).toContain("still awaiting a chain outcome");
+
+    // Rejected duplicate attempt preserves the original state completely
+    const nextState = reduceDuplicateWriteAttempt(inFlightState);
+    expect(nextState).toBe(inFlightState);
+    expect(nextState.phase).toBe("awaiting-signature");
+    expect(nextState.action).toBe("invest");
+    expect(nextState.amount).toBe(10_000_000n);
+    expect(nextState.txHash).toBeNull();
+  });
+
+  it("blocks duplicate call after broadcast with receipt still pending and preserves tx hash/action/amount", () => {
+    const submittedState: InvestorTxState = {
+      phase: "submitted",
+      action: "invest",
+      amount: 5_000_000n,
+      txHash: dummyTxHash,
+      error: null,
+    };
+
+    const guardSubmitted = evaluateInvestorWriteGuard({
+      isWriteInFlight: false,
+      txPhase: submittedState.phase,
+    });
+    expect(guardSubmitted.canProceed).toBe(false);
+
+    const confirmingState: InvestorTxState = {
+      phase: "confirming",
+      action: "invest",
+      amount: 5_000_000n,
+      txHash: dummyTxHash,
+      error: null,
+    };
+
+    const guardConfirming = evaluateInvestorWriteGuard({
+      isWriteInFlight: false,
+      txPhase: confirmingState.phase,
+    });
+    expect(guardConfirming.canProceed).toBe(false);
+
+    // State, hash, action, amount remain completely intact
+    const preserved = reduceDuplicateWriteAttempt(confirmingState);
+    expect(preserved.txHash).toBe(dummyTxHash);
+    expect(preserved.action).toBe("invest");
+    expect(preserved.amount).toBe(5_000_000n);
+    expect(preserved.phase).toBe("confirming");
+    expect(preserved.error).toBeNull();
+  });
+
+  it("blocks duplicate call after receipt lookup becomes unknown, preserves state/hash, and keeps a third attempt blocked", () => {
+    const unknownState: InvestorTxState = {
+      phase: "receipt-unknown",
+      action: "approve",
+      amount: 3_000_000n,
+      txHash: dummyTxHash,
+      error: "Receipt lookup timed out after broadcast.",
+    };
+
+    // Duplicate call after receipt lookup becomes unknown
+    const duplicateGuard = evaluateInvestorWriteGuard({
+      isWriteInFlight: false,
+      txPhase: unknownState.phase,
+    });
+    expect(duplicateGuard.canProceed).toBe(false);
+
+    // State is preserved, not overwritten with "failed" or txHash: null
+    const preservedState = reduceDuplicateWriteAttempt(unknownState);
+    expect(preservedState.txHash).toBe(dummyTxHash);
+    expect(preservedState.action).toBe("approve");
+    expect(preservedState.amount).toBe(3_000_000n);
+    expect(preservedState.phase).toBe("receipt-unknown");
+    expect(preservedState.error).toBe("Receipt lookup timed out after broadcast.");
+
+    // A third attempt is STILL blocked after the rejected duplicate
+    const thirdAttemptGuard = evaluateInvestorWriteGuard({
+      isWriteInFlight: false,
+      txPhase: preservedState.phase,
+    });
+    expect(thirdAttemptGuard.canProceed).toBe(false);
+  });
+
+  it("resetTx cannot erase an unresolved broadcast or pending write, but resets resolved outcomes truthfully", () => {
+    const unresolvedBroadcast: InvestorTxState = {
+      phase: "receipt-unknown",
+      action: "invest",
+      amount: 1_000_000n,
+      txHash: dummyTxHash,
+      error: "Receipt unavailable",
+    };
+
+    expect(canResetInvestorTx(unresolvedBroadcast.phase)).toBe(false);
+    const afterResetAttempt = reduceResetTxState(unresolvedBroadcast);
+    expect(afterResetAttempt).toBe(unresolvedBroadcast);
+    expect(afterResetAttempt.txHash).toBe(dummyTxHash);
+    expect(afterResetAttempt.phase).toBe("receipt-unknown");
+
+    // Also blocks pending broadcast
+    const submittedState: InvestorTxState = {
+      phase: "submitted",
+      action: "invest",
+      amount: 1_000_000n,
+      txHash: dummyTxHash,
+      error: null,
+    };
+    expect(canResetInvestorTx(submittedState.phase)).toBe(false);
+    expect(reduceResetTxState(submittedState)).toBe(submittedState);
+
+    // In contrast, resolved receipt (confirmed) can be reset
+    const confirmedState: InvestorTxState = {
+      phase: "confirmed",
+      action: "invest",
+      amount: 1_000_000n,
+      txHash: dummyTxHash,
+      error: null,
+    };
+    expect(canResetInvestorTx(confirmedState.phase)).toBe(true);
+    expect(reduceResetTxState(confirmedState)).toEqual({
+      phase: "idle",
+      action: null,
+      amount: null,
+      txHash: null,
+      error: null,
+    });
+
+    // Resolved receipt (reverted) can also be reset
+    const revertedState: InvestorTxState = {
+      phase: "reverted",
+      action: "invest",
+      amount: 1_000_000n,
+      txHash: dummyTxHash,
+      error: "Transaction reverted on chain.",
+    };
+    expect(canResetInvestorTx(revertedState.phase)).toBe(true);
+    expect(reduceResetTxState(revertedState)).toEqual({
+      phase: "idle",
+      action: null,
+      amount: null,
+      txHash: null,
+      error: null,
+    });
   });
 });

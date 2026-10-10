@@ -50,17 +50,22 @@ export type InvestorReadAddresses = Pick<
 
 /**
  * Reads public chain environment variables safely in both browser and server runtimes.
+ *
+ * Next.js statically inlines direct property accesses like `process.env.NEXT_PUBLIC_*`
+ * at build time into client-side bundles. Dynamic bracket indexing (`process.env[key]`)
+ * cannot be analyzed at build time and yields undefined in the browser. Each canonical
+ * frozen name is therefore read through an explicit, static property access.
  * Does not throw; returns null when incomplete or malformed.
  */
-function readClientEnv(): NodeJS.ProcessEnv {
+export function readClientEnv(): NodeJS.ProcessEnv {
   return {
     NODE_ENV: (process.env.NODE_ENV as "development" | "production" | "test" | undefined) ?? "development",
-    [RPC_URL_ENV]: process.env[RPC_URL_ENV],
-    [CONTRACT_ADDRESS_ENV.registry]: process.env[CONTRACT_ADDRESS_ENV.registry],
-    [CONTRACT_ADDRESS_ENV.identityRegistry]: process.env[CONTRACT_ADDRESS_ENV.identityRegistry],
-    [CONTRACT_ADDRESS_ENV.mockIdr]: process.env[CONTRACT_ADDRESS_ENV.mockIdr],
-    [CONTRACT_ADDRESS_ENV.offeringEscrow]: process.env[CONTRACT_ADDRESS_ENV.offeringEscrow],
-    [CONTRACT_ADDRESS_ENV.revenueDistributor]: process.env[CONTRACT_ADDRESS_ENV.revenueDistributor],
+    [RPC_URL_ENV]: process.env.NEXT_PUBLIC_ARBITRUM_SEPOLIA_RPC_URL,
+    [CONTRACT_ADDRESS_ENV.registry]: process.env.NEXT_PUBLIC_ARCHPROP_REGISTRY_ADDRESS,
+    [CONTRACT_ADDRESS_ENV.identityRegistry]: process.env.NEXT_PUBLIC_IDENTITY_REGISTRY_ADDRESS,
+    [CONTRACT_ADDRESS_ENV.mockIdr]: process.env.NEXT_PUBLIC_MOCK_IDR_ADDRESS,
+    [CONTRACT_ADDRESS_ENV.offeringEscrow]: process.env.NEXT_PUBLIC_OFFERING_ESCROW_ADDRESS,
+    [CONTRACT_ADDRESS_ENV.revenueDistributor]: process.env.NEXT_PUBLIC_REVENUE_DISTRIBUTOR_ADDRESS,
   };
 }
 

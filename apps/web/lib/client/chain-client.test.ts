@@ -9,6 +9,7 @@ import {
   getArchpropPublicClient,
   getClientChainConfig,
   inspectClientChainConfig,
+  readClientEnv,
   resetClientChainCaches,
 } from "./chain-client";
 
@@ -46,6 +47,13 @@ function restoreEnv(snapshot: Record<string, string | undefined>): void {
 }
 
 describe("chain-client configuration", () => {
+  const savedEnv = snapshotEnv();
+
+  afterEach(() => {
+    restoreEnv(savedEnv);
+    resetClientChainCaches();
+  });
+
   it("returns null from getClientChainConfig when environment is missing or empty", () => {
     const config = getClientChainConfig();
     expect(config).toBeNull();
@@ -55,6 +63,26 @@ describe("chain-client configuration", () => {
     const report = inspectClientChainConfig();
     expect(report.ok).toBe(false);
     expect(report.errors.length).toBeGreaterThan(0);
+  });
+
+  it("reads canonical NEXT_PUBLIC_* variables via direct static property accesses", () => {
+    for (const [key, value] of Object.entries(VALID_ENV)) {
+      process.env[key] = value;
+    }
+    resetClientChainCaches();
+
+    const env = readClientEnv();
+    expect(env.NEXT_PUBLIC_ARBITRUM_SEPOLIA_RPC_URL).toBe(VALID_ENV.NEXT_PUBLIC_ARBITRUM_SEPOLIA_RPC_URL);
+    expect(env.NEXT_PUBLIC_ARCHPROP_REGISTRY_ADDRESS).toBe(VALID_ENV.NEXT_PUBLIC_ARCHPROP_REGISTRY_ADDRESS);
+    expect(env.NEXT_PUBLIC_IDENTITY_REGISTRY_ADDRESS).toBe(VALID_ENV.NEXT_PUBLIC_IDENTITY_REGISTRY_ADDRESS);
+    expect(env.NEXT_PUBLIC_MOCK_IDR_ADDRESS).toBe(VALID_ENV.NEXT_PUBLIC_MOCK_IDR_ADDRESS);
+    expect(env.NEXT_PUBLIC_OFFERING_ESCROW_ADDRESS).toBe(VALID_ENV.NEXT_PUBLIC_OFFERING_ESCROW_ADDRESS);
+    expect(env.NEXT_PUBLIC_REVENUE_DISTRIBUTOR_ADDRESS).toBe(VALID_ENV.NEXT_PUBLIC_REVENUE_DISTRIBUTOR_ADDRESS);
+
+    const config = getClientChainConfig();
+    expect(config).not.toBeNull();
+    expect(config?.rpcUrl).toBe(VALID_ENV.NEXT_PUBLIC_ARBITRUM_SEPOLIA_RPC_URL);
+    expect(config?.addresses.registry).toBe(VALID_ENV.NEXT_PUBLIC_ARCHPROP_REGISTRY_ADDRESS);
   });
 });
 
