@@ -278,7 +278,11 @@ event RevenueClaimed(uint256 indexed epochId, address indexed investor, uint256 
    future deadline, nonzero treasury, and `target == totalSupply * tokenPrice`.
    Payments remain escrowed until successful finalization and release.
 5. A failed offering permits refunds only; a funded offering permits token claims
-   only. All claim/release paths are one-time and non-reentrant.
+   only. All claim/release paths are one-time and non-reentrant. Escrow
+   `claimRefund` and `releaseFunds` require the refunding investor or issuer
+   treasury to actually receive the exact recorded payment amount; a
+   fee-on-transfer token activated after investment must revert the entire
+   payout, preserving state for retry rather than emit a false success event.
 6. Revenue publication requires a matching valid `REVENUE` attestation and
    an exact mIDR `safeTransferFrom` deposit in the same transaction. The
    attestation evidence hash is single-use, only one epoch per property token
@@ -288,7 +292,10 @@ event RevenueClaimed(uint256 indexed epochId, address indexed investor, uint256 
    aggregate entitlement cannot exceed the funded amount (rounding dust remains
    in the distributor). Transfers unlock only when an admin closes the epoch
    after its deadline; claims are unavailable after closure and remaining dust
-   returns to the epoch funder.
+   returns to the epoch funder. `claimRevenue` and `closeRevenueEpoch` require
+   the claimant or funder to actually receive the exact entitlement/dust;
+   a transfer fee activated after deposit must revert atomically rather than
+   mark a short-paid claim or closure successful.
 
 ## HTTP schema
 

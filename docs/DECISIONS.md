@@ -173,6 +173,27 @@ Verify a valid role receives one short-lived URL with `Cache-Control: no-store`
 and no storage path in the response. Live Supabase RLS/storage behavior remains
 an explicit integration gate when an instance is configured.
 
+## ADR-015 — Outgoing economic transfers must reach their recipients exactly
+
+**Decision:** Escrow refunds and treasury releases, plus distributor revenue
+claims and dust returns, must verify the recipient's payment-token balance
+increased by the exact recorded amount. A token that starts charging a transfer
+fee after an exact deposit must cause an atomic revert; the claim/release/epoch
+state and funds remain available for a correct retry. Reuse existing custom
+errors where possible. Frozen functions, events, constructors, and lifecycle
+rules are unchanged.
+
+**Why:** Exact incoming deposits alone do not prove exact outgoing economic
+rights. A mutable fee token could fund a nominal target at zero fee, then
+short-pay investors, the treasury, or revenue claimants while the protocol
+emits an event for the full entitlement.
+
+**Test plan:** Use a mutable test fee token with zero fee during investment or
+revenue funding, then enable a fee before refund/release/claim/close. Assert
+the exact mismatch revert, zero short-payment, no state consumption, and
+preserved funds. Keep all canonical MockIDR success paths and the full Foundry
+suite green; no shared-chain deployment.
+
 ---
 
 ## Interface change process
