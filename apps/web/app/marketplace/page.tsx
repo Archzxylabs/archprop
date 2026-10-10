@@ -1,40 +1,90 @@
 import Link from "next/link";
 import type { AssetId } from "@archprop/shared";
+import { VILLA_NUSA } from "@archprop/shared";
 import { DemoDisclosure } from "@/components/demo-disclosure";
 import { ChainValue } from "@/components/chain-state";
 import { StatusBadge } from "@/components/status-badge";
 import { buildMarketplaceCards, findListing } from "@/lib/client/listings";
 import {
+  chainError,
+  chainReady,
   chainUnavailable,
   formatBps,
   formatWholeUnits,
   type ChainDataState,
   type FundingView,
 } from "@/lib/client/view-models";
+import {
+  deriveOfferingForAsset,
+  getArchpropPublicClient,
+  getClientChainConfig,
+  inspectClientChainConfig,
+} from "@/lib/client/chain-client";
 
 /**
  * Marketplace listing.
  *
- * Funding is an escrow read. No wallet is connected in the FE-001 shell, so
- * every card renders the escrow's unavailable reason rather than a percentage:
- * the PRD's "72% funded" seed is what the chain will return once a read
- * exists, not a figure this screen invents.
+ * Funding is read from OfferingEscrow via public RPC when configuration is
+ * present, without requiring a connected wallet. Missing or invalid config
+ * or RPC errors show an unavailable or error state, never a fabricated balance,
+ * status, or funding percentage. Ubud/Lombok remain non-investable seed cards.
  */
-
-function readFundingUnavailable(assetId: AssetId): ChainDataState<FundingView> {
-  void assetId;
-  return chainUnavailable<FundingView>(
-    "Funding is read from the offering escrow once a wallet is connected.",
-  );
-}
 
 /** The published one-line summary for a listing, from its seed. */
 function listingSummary(externalId: string): string {
   return findListing(externalId)?.summary ?? "";
 }
 
-export default function MarketplacePage() {
-  const cards = buildMarketplaceCards(readFundingUnavailable);
+export default async function MarketplacePage() {
+  const config = getClientChainConfig();
+
+  let readFunding: (assetId: AssetId) => ChainDataState<FundingView>;
+
+  if (config) {
+    try {
+      const client = getArchpropPublicClient(config);
+      const villaNusaOffering = await deriveOfferingForAsset(
+        client,
+        config.addresses,
+        VILLA_NUSA.id,
+      );
+
+      readFunding = (assetId: AssetId): ChainDataState<FundingView> => {
+        if (assetId.toLowerCase() === VILLA_NUSA.id.toLowerCase()) {
+          if (villaNusaOffering) {
+            const percentBps =
+              villaNusaOffering.target > 0n
+                ? Number((villaNusaOffering.raised * 10_000n) / villaNusaOffering.target)
+                : 0;
+            return chainReady({
+              raisedAmount: villaNusaOffering.raised,
+              targetAmount: villaNusaOffering.target,
+              percentBps,
+            });
+          }
+          return chainUnavailable("No confirmed offering found in OfferingEscrow for this asset.");
+        }
+        return chainUnavailable("Coming soon — no on-chain offering exists for this property.");
+      };
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      readFunding = () => chainError(`Failed to read from OfferingEscrow: ${reason}`);
+    }
+  } else {
+    const report = inspectClientChainConfig();
+    const reason =
+      report.errors.length > 0
+        ? `Chain configuration incomplete: ${report.errors.join("; ")}`
+        : "Chain configuration unavailable in this environment.";
+    readFunding = (assetId: AssetId) => {
+      if (assetId.toLowerCase() === VILLA_NUSA.id.toLowerCase()) {
+        return chainUnavailable(reason);
+      }
+      return chainUnavailable("Coming soon — no on-chain offering exists for this property.");
+    };
+  }
+
+  const cards = buildMarketplaceCards(readFunding);
 
   return (
     <div className="mx-auto w-full max-w-6xl px-5 py-10">

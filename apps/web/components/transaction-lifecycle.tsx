@@ -38,10 +38,10 @@ export interface TransactionLifecycleProps {
   /** Short name of the write, e.g. "Ownership attestation". */
   actionLabel: string;
   /** Contract or account the write targets, shown when known. */
-  target?: Address | null;
+  target?: Address | null | undefined;
   /** What the write accomplishes once confirmed, in plain language. */
-  successDescription?: string;
-  className?: string;
+  successDescription?: string | undefined;
+  className?: string | undefined;
 }
 
 export function TransactionLifecycle({
@@ -155,11 +155,11 @@ export interface ActionButtonProps
   extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   /** What the write does, in plain language. */
   label: string;
-  tone?: "primary" | "secondary" | "danger";
+  tone?: "primary" | "secondary" | "danger" | undefined;
   /** True while a write is in flight. */
-  busy?: boolean;
+  busy?: boolean | undefined;
   /** The missing prerequisite, when the button is disabled. */
-  missingPrerequisite?: string;
+  missingPrerequisite?: string | undefined;
   children?: ReactNode;
 }
 
