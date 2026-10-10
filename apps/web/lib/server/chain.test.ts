@@ -8,6 +8,7 @@ import {
   fetchRegistryAsset,
   fetchVerifiedReceipt,
   verifyRpcChainId,
+  checkRegistryRole,
 } from "./chain";
 
 const DISTRIBUTOR: `0x${string}` = "0x5FbDB2315678afecb367f032d93F642f64180aa3";
@@ -300,6 +301,44 @@ describe("fetchRegistryAsset", () => {
       },
       REGISTRY,
       ASSET_ID,
+    );
+    expect(result).toEqual({ ok: false, reason: "rpc_error" });
+  });
+});
+
+describe("checkRegistryRole", () => {
+  const REGISTRY: `0x${string}` = "0x5FbDB2315678afecb367f032d93F642f64180aa3";
+  const ACCOUNT: `0x${string}` = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
+  const ROLE: `0x${string}` = "0x92201a2c4d2d948a3b076df4ae54439a8944585a9b2f54c599c035e4b5ad6c99";
+
+  it("returns hasRole true when account holds the role", async () => {
+    const result = await checkRegistryRole(
+      async () => true,
+      REGISTRY,
+      ROLE,
+      ACCOUNT,
+    );
+    expect(result).toEqual({ ok: true, hasRole: true });
+  });
+
+  it("returns hasRole false when account does not hold the role", async () => {
+    const result = await checkRegistryRole(
+      async () => false,
+      REGISTRY,
+      ROLE,
+      ACCOUNT,
+    );
+    expect(result).toEqual({ ok: true, hasRole: false });
+  });
+
+  it("returns rpc_error when readContract throws", async () => {
+    const result = await checkRegistryRole(
+      async () => {
+        throw new Error("RPC connection refused");
+      },
+      REGISTRY,
+      ROLE,
+      ACCOUNT,
     );
     expect(result).toEqual({ ok: false, reason: "rpc_error" });
   });

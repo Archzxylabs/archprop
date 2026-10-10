@@ -320,4 +320,68 @@ export async function fetchRegistryAsset(
   }
 }
 
+export const RegistryAssetStatus = {
+  SUBMITTED: 0,
+  UNDER_VERIFICATION: 1,
+  VERIFIED: 2,
+  ISSUANCE_READY: 3,
+  OFFERING: 4,
+  FUNDED: 5,
+  ACTIVE: 6,
+  REJECTED: 7,
+  FAILED: 8,
+} as const;
+
+export const HAS_ROLE_ABI = [
+  {
+    type: "function",
+    name: "hasRole",
+    stateMutability: "view",
+    inputs: [
+      { name: "role", type: "bytes32" },
+      { name: "account", type: "address" },
+    ],
+    outputs: [{ name: "", type: "bool" }],
+  },
+] as const;
+
+/** Canonical role hash for keccak256("LEGAL_VERIFIER_ROLE"). */
+export const LEGAL_VERIFIER_ROLE =
+  "0x92201a2c4d2d948a3b076df4ae54439a8944585a9b2f54c599c035e4b5ad6c99" as `0x${string}`;
+
+/** Canonical role hash for keccak256("VALUATION_VERIFIER_ROLE"). */
+export const VALUATION_VERIFIER_ROLE =
+  "0xf80765b97a643e8d275f3a9052a5634a45a8446b9661c19b99307d3338f8907f" as `0x${string}`;
+
+export type RoleCheck =
+  | { ok: true; hasRole: boolean }
+  | { ok: false; reason: "rpc_error" };
+
+/**
+ * Checks whether an account has a specific role on ArchpropRegistry.
+ */
+export async function checkRegistryRole(
+  readContract: (args: {
+    address: `0x${string}`;
+    abi: typeof HAS_ROLE_ABI;
+    functionName: "hasRole";
+    args: readonly [`0x${string}`, `0x${string}`];
+  }) => Promise<unknown>,
+  registryAddress: string,
+  role: `0x${string}`,
+  account: `0x${string}`,
+): Promise<RoleCheck> {
+  try {
+    const raw = await readContract({
+      address: registryAddress as `0x${string}`,
+      abi: HAS_ROLE_ABI,
+      functionName: "hasRole",
+      args: [role, account],
+    });
+    return { ok: true, hasRole: Boolean(raw) };
+  } catch {
+    return { ok: false, reason: "rpc_error" };
+  }
+}
+
 export type { ChainConfig };

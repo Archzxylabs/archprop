@@ -195,3 +195,53 @@ export const bindPropertyChainSchema = z
   });
 
 export type BindPropertyChainInput = z.infer<typeof bindPropertyChainSchema>;
+
+export const verifierEvidenceAccessSchema = z
+  .object({
+    role: z.enum(["LEGAL", "VALUATION"], {
+      required_error: "role is required",
+      invalid_type_error: "role must be LEGAL or VALUATION",
+    }),
+    issuedAtMs: z
+      .string({ required_error: "issuedAtMs is required" })
+      .refine(isCanonicalUnsignedInt, "must be a canonical base-10 unsigned integer string"),
+    signature: signatureHex,
+  })
+  .superRefine((val, ctx) => {
+    const parsed = parseCanonicalUnsignedInt(val.issuedAtMs);
+    if (parsed === null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["issuedAtMs"],
+        message: "must be a canonical base-10 unsigned integer string",
+      });
+      return;
+    }
+    const ms = Number(parsed);
+    if (!Number.isSafeInteger(ms)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["issuedAtMs"],
+        message: "timestamp exceeds safe integer range",
+      });
+      return;
+    }
+    const now = Date.now();
+    const TEN_MINUTES_MS = 10 * 60 * 1000;
+    const SIXTY_SECONDS_MS = 60 * 1000;
+    if (ms < now - TEN_MINUTES_MS) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["issuedAtMs"],
+        message: "timestamp is older than 10 minutes",
+      });
+    } else if (ms > now + SIXTY_SECONDS_MS) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["issuedAtMs"],
+        message: "timestamp is more than 60 seconds in the future",
+      });
+    }
+  });
+
+export type VerifierEvidenceAccessInput = z.infer<typeof verifierEvidenceAccessSchema>;
