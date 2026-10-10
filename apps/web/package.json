@@ -12,6 +12,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@archprop/chain": "workspace:*",
     "@archprop/shared": "workspace:*",
     "@supabase/supabase-js": "2.49.4",
     "next": "16.0.0",
