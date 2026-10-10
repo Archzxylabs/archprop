@@ -1,0 +1,22 @@
+{
+  "name": "@archprop/scripts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./deploy-local.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "deploy:local": "tsx deploy-local.ts"
+  },
+  "dependencies": {
+    "@archprop/chain": "workspace:*",
+    "@archprop/shared": "workspace:*",
+    "viem": "2.38.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.13.5",
+    "typescript": "5.9.3"
+  }
+}
