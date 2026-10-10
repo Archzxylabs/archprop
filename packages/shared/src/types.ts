@@ -80,6 +80,13 @@ export interface BindPropertyChainRequest {
   signature: Hex;
 }
 
+/** Wallet-signed, short-lived access request for one private demo evidence PDF. */
+export interface VerifierEvidenceAccessRequest {
+  role: "LEGAL" | "VALUATION";
+  issuedAtMs: string;
+  signature: Hex;
+}
+
 /** Exact EIP-191 personal_sign message for the property/chain binding route. */
 export function buildPropertyBindingMessage(input: {
   propertyId: string;
@@ -95,6 +102,27 @@ export function buildPropertyBindingMessage(input: {
     `userId:${input.userId.toLowerCase()}`,
     `chainAssetId:${input.chainAssetId.toLowerCase()}`,
     `txHash:${input.txHash.toLowerCase()}`,
+    `issuedAtMs:${input.issuedAtMs}`,
+  ].join("\n");
+}
+
+/** Exact EIP-191 personal_sign message for verifier evidence access. */
+export function buildVerifierEvidenceAccessMessage(input: {
+  propertyId: string;
+  documentId: string;
+  assetId: AssetId;
+  role: VerifierEvidenceAccessRequest["role"];
+  userId: string;
+  issuedAtMs: string;
+}): string {
+  return [
+    "ARCHPROP verifier-evidence access v1",
+    `chainId:${CHAIN_ID}`,
+    `propertyId:${input.propertyId.toLowerCase()}`,
+    `documentId:${input.documentId.toLowerCase()}`,
+    `assetId:${input.assetId.toLowerCase()}`,
+    `role:${input.role}`,
+    `userId:${input.userId.toLowerCase()}`,
     `issuedAtMs:${input.issuedAtMs}`,
   ].join("\n");
 }

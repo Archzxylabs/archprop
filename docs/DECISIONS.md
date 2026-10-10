@@ -143,6 +143,36 @@ regression proving the investment reverts, `raised`/allocation/payment remain
 zero, and the escrow holds no undercollateralized deposit. Run the full Foundry
 suite and local E2E after integration.
 
+## ADR-014 — Signed, role-checked verifier evidence access
+
+**Decision:** Add the `POST /api/properties/:id/documents/:documentId/access`
+contract in `docs/INTERFACES.md`. A Supabase-authenticated caller must sign a
+fresh EIP-191 message binding their user ID, one document, the bound asset,
+and the requested verifier role. The server checks the recovered wallet's live
+registry role, rejects the asset owner, requires `UNDER_VERIFICATION`, and
+issues only a 60-second private-storage signed URL for a role-appropriate
+synthetic PDF. It never trusts a DB role, caller-supplied storage path, or
+cached lifecycle state as authorization.
+
+**Why:** The verifier screen must inspect the exact private evidence bytes
+whose SHA-256 hash is attested on-chain. Owner-only storage RLS and a public
+document URL cannot establish independent, least-privilege verifier access.
+The wallet signature and live on-chain role preserve the verification gate
+without giving the server a signing key.
+
+**Affected consumers:** Backend route/security tests and verifier UI use the
+shared `VerifierEvidenceAccessRequest` and
+`buildVerifierEvidenceAccessMessage`. No Solidity ABI or existing route changes.
+This is an additive API route; no new database table or broad storage policy is
+required.
+
+**Test plan:** Reject missing/invalid JWT, malformed/stale signature, wrong
+chain, unbound or wrong-state asset, owner self-access, wrong/missing on-chain
+role, document/property mismatch, forbidden document type, and storage errors.
+Verify a valid role receives one short-lived URL with `Cache-Control: no-store`
+and no storage path in the response. Live Supabase RLS/storage behavior remains
+an explicit integration gate when an instance is configured.
+
 ---
 
 ## Interface change process

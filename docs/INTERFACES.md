@@ -77,9 +77,17 @@ export interface CreatePropertyRequest {
 export interface BindPropertyChainRequest {
   txHash: TxHash; chainAssetId: AssetId; issuedAtMs: string; signature: Hex;
 }
+export interface VerifierEvidenceAccessRequest {
+  role: "LEGAL" | "VALUATION"; issuedAtMs: string; signature: Hex;
+}
 export function buildPropertyBindingMessage(input: {
   propertyId: string; userId: string; chainAssetId: AssetId;
   txHash: TxHash; issuedAtMs: string;
+}): string;
+export function buildVerifierEvidenceAccessMessage(input: {
+  propertyId: string; documentId: string; assetId: AssetId;
+  role: VerifierEvidenceAccessRequest["role"];
+  userId: string; issuedAtMs: string;
 }): string;
 ```
 
@@ -294,10 +302,41 @@ Routes are relative to `apps/web` and return JSON. Validation errors are
 | `GET /api/properties` | optional `status`, `q` | `200 { properties }` |
 | `GET /api/properties/:id` | property UUID or chain asset ID | `200 { property, documents, chainCache }` |
 | `POST /api/properties/:id/documents` | `multipart/form-data`: `file`, `documentType` | `201 { document: DocumentRecord }` |
+| `POST /api/properties/:id/documents/:documentId/access` | `VerifierEvidenceAccessRequest`; signed-in verifier context | `200 { url, expiresIn: 60, document: { id, documentType, sha256, isDemo: true } }` |
 | `POST /api/demo/revenue` | `{ assetId, period, amount, evidenceHash, txHash }` | `201 { revenueEpoch }` |
 
 The document route accepts PDFs only, limits uploads to 10 MiB, calculates its
 own SHA-256, writes private storage, and never accepts a client-provided hash.
+The verifier evidence-access route returns a 60-second Supabase signed URL for
+one private PDF. It requires a valid Supabase JWT, UUID property/document IDs,
+an existing document belonging to that property, a non-null bound chain asset,
+RPC chain ID `421614`, and current registry asset status
+`UNDER_VERIFICATION`. The server recovers an EIP-191 signature over the exact
+message below and checks the recovered address is not the asset owner and has
+the corresponding live registry role (`LEGAL_VERIFIER_ROLE` for `LEGAL`,
+`VALUATION_VERIFIER_ROLE` for `VALUATION`). `LEGAL` may read `LAND_RIGHT` or
+`BUILDING_PERMIT`; `VALUATION` may read `APPRAISAL`. No verifier access to the
+`ECONOMIC_RIGHTS_AGREEMENT` is granted by this endpoint. The server uses its
+service-role client only after these checks to create the signed URL; it never
+returns a permanent/public URL or the private storage path. The response has
+`Cache-Control: no-store`. A role or asset state cached in PostgreSQL never
+authorizes access. `issuedAtMs` is a canonical unsigned decimal Unix-millisecond
+string no older than 10 minutes and no more than 60 seconds in the future.
+The signature covers the exact no-trailing-newline text returned by
+`buildVerifierEvidenceAccessMessage({ propertyId: id, documentId, assetId,
+role, userId: JWT user id, issuedAtMs })`:
+
+```text
+ARCHPROP verifier-evidence access v1
+chainId:421614
+propertyId:<lowercase UUID>
+documentId:<lowercase UUID>
+assetId:<lowercase 0x-prefixed bytes32>
+role:<LEGAL|VALUATION>
+userId:<lowercase UUID>
+issuedAtMs:<canonical decimal string>
+```
+
 The binding route records an already-confirmed `createAsset` transaction; it
 never broadcasts one. The URL `:id` is the draft property's UUID. The server
 requires its authenticated owner, `DRAFT`/unbound cache state, RPC chain ID
