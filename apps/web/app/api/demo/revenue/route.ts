@@ -14,8 +14,8 @@
 import type { NextRequest } from "next/server";
 import { createPublicClient, http } from "viem";
 import { arbitrumSepolia } from "viem/chains";
-import { loadConfig, describe } from "@/lib/server/config";
-import { createServiceClient, createUserClient } from "@/lib/server/supabase";
+import { loadConfig, describe } from "../../../../lib/server/config";
+import { createServiceClient, createUserClient } from "../../../../lib/server/supabase";
 import {
   readJsonBody,
   requireAuth,
@@ -24,17 +24,18 @@ import {
   jsonError,
   isUniqueViolation,
   serviceUnavailable,
-} from "@/lib/server/http";
-import { revenueEpochSchema } from "@/lib/server/schemas";
+} from "../../../../lib/server/http";
+import { revenueEpochSchema } from "../../../../lib/server/schemas";
 import {
   decodeRevenuePublishedLogs,
   fetchVerifiedReceipt,
   receiptGetterFromClient,
-} from "@/lib/server/chain";
+  verifyRpcChainId,
+} from "../../../../lib/server/chain";
 import {
   toRevenueEpochDto,
   type RevenueEpochRow,
-} from "@/lib/server/properties";
+} from "../../../../lib/server/properties";
 
 function unavailable(error: unknown) {
   return serviceUnavailable(`Configuration error: ${describe(error)}`);
@@ -47,7 +48,7 @@ export async function POST(request: NextRequest) {
   }
   const config = configResult.config;
 
-  const anonClient = createUserClient(config.supabase, "");
+  const anonClient = createUserClient(config.supabase);
   const auth = await requireAuth(anonClient, request);
   if (!auth.ok) {
     return auth.response;
@@ -96,12 +97,27 @@ export async function POST(request: NextRequest) {
   }
 
   // ---- Chain verification -------------------------------------------------
-  // The receipt is fetched from the configured RPC. A missing or reverted
-  // receipt is rejected rather than recorded.
+  // The receipt is fetched from the configured RPC. Before trusting any
+  // receipt, we MUST verify the RPC reports the exact expected chain ID (421614).
   const client = createPublicClient({
     chain: arbitrumSepolia,
     transport: http(config.chain.rpcUrl),
   });
+
+  const chainIdCheck = await verifyRpcChainId(
+    () => client.getChainId(),
+    config.chain.chainId,
+  );
+  if (!chainIdCheck.ok) {
+    if (chainIdCheck.reason === "mismatch") {
+      return jsonError(
+        502,
+        "chain_mismatch",
+        `The RPC reports chain ID ${chainIdCheck.chainId}, but ${config.chain.chainId} is required.`,
+      );
+    }
+    return jsonError(502, "chain_unavailable", "The chain could not be reached.");
+  }
 
   const receiptCheck = await fetchVerifiedReceipt(
     receiptGetterFromClient(client),

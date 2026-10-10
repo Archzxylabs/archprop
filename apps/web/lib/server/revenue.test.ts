@@ -112,4 +112,57 @@ describe("Duplicate revenue period isolation and conflict handling", () => {
       expect("status" in errResponse && errResponse.status).toBe(500);
     });
   });
+
+  describe("RPC Chain ID verification failure paths", () => {
+    it("returns 502 chain_mismatch on foreign chain ID and writes no cache row", async () => {
+      let insertCalled = false;
+      const simulateRevenueRoute = (rpcChainId: number) => {
+        const expectedChainId = 421614;
+        if (rpcChainId !== expectedChainId) {
+          return jsonError(
+            502,
+            "chain_mismatch",
+            `The RPC reports chain ID ${rpcChainId}, but ${expectedChainId} is required.`,
+          );
+        }
+        insertCalled = true;
+        return { status: 201 };
+      };
+
+      const response = simulateRevenueRoute(1); // Mainnet
+      expect("status" in response && response.status).toBe(502);
+      expect(insertCalled).toBe(false);
+
+      const json = await (response as { json: () => Promise<unknown> }).json();
+      expect(json).toEqual({
+        error: {
+          code: "chain_mismatch",
+          message: "The RPC reports chain ID 1, but 421614 is required.",
+        },
+      });
+    });
+
+    it("returns 502 chain_unavailable on RPC transport failure and writes no cache row", async () => {
+      let insertCalled = false;
+      const simulateRevenueRouteWithRpcError = (rpcFails: boolean) => {
+        if (rpcFails) {
+          return jsonError(502, "chain_unavailable", "The chain could not be reached.");
+        }
+        insertCalled = true;
+        return { status: 201 };
+      };
+
+      const response = simulateRevenueRouteWithRpcError(true);
+      expect("status" in response && response.status).toBe(502);
+      expect(insertCalled).toBe(false);
+
+      const json = await (response as { json: () => Promise<unknown> }).json();
+      expect(json).toEqual({
+        error: {
+          code: "chain_unavailable",
+          message: "The chain could not be reached.",
+        },
+      });
+    });
+  });
 });

@@ -65,7 +65,7 @@ export async function POST(
     return notFound("Property not found.");
   }
 
-  const anonClient = createUserClient(configResult.config.supabase, "");
+  const anonClient = createUserClient(configResult.config.supabase);
   const auth = await requireAuth(anonClient, request);
   if (!auth.ok) {
     return auth.response;

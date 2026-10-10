@@ -136,4 +136,29 @@ export function receiptGetterFromClient(client: {
   return (txHash: string) => client.getTransactionReceipt({ hash: txHash as `0x${string}` });
 }
 
+export type ChainIdCheck =
+  | { ok: true; chainId: number }
+  | { ok: false; reason: "rpc_error" | "mismatch"; chainId?: number };
+
+/**
+ * Confirms that the RPC client is connected to the expected chain ID (421614).
+ *
+ * Failing to check the chain ID would let an RPC pointing to the wrong network
+ * validate receipts or events for a foreign chain.
+ */
+export async function verifyRpcChainId(
+  getChainId: () => Promise<number>,
+  expectedChainId: number = 421614,
+): Promise<ChainIdCheck> {
+  try {
+    const chainId = await getChainId();
+    if (chainId !== expectedChainId) {
+      return { ok: false, reason: "mismatch", chainId };
+    }
+    return { ok: true, chainId };
+  } catch {
+    return { ok: false, reason: "rpc_error" };
+  }
+}
+
 export type { ChainConfig };

@@ -244,17 +244,17 @@ alter table public.revenue_epochs    enable row level security;
 
 -- ---- users -----------------------------------------------------------------
 
+-- Users can only SELECT their own mirror row.
+-- Role and wallet identity fields are non-self-assignable in this MVP: direct
+-- client INSERT, UPDATE, and DELETE are withheld. The mirror row is created
+-- exclusively by the handle_new_auth_user trigger running under SECURITY DEFINER.
 drop policy if exists users_select_own on public.users;
 create policy users_select_own on public.users
   for select to authenticated using (id = auth.uid());
 
 drop policy if exists users_insert_own on public.users;
-create policy users_insert_own on public.users
-  for insert to authenticated with check (id = auth.uid());
-
 drop policy if exists users_update_own on public.users;
-create policy users_update_own on public.users
-  for update to authenticated using (id = auth.uid()) with check (id = auth.uid());
+drop policy if exists users_delete_own on public.users;
 
 -- ---- properties ------------------------------------------------------------
 
@@ -397,7 +397,10 @@ begin
       token_price, economic_rights_bps, status_cache
     ) on public.properties to authenticated;
 
-    grant select, insert, update, delete on public.users to authenticated;
+    -- Users table: authenticated callers may only SELECT their own mirror row.
+    -- Role and wallet identity fields are non-self-assignable in this MVP:
+    -- INSERT, UPDATE, and DELETE are strictly withheld.
+    grant select on public.users to authenticated;
     grant select, insert, update, delete on public.property_images to authenticated;
     grant select, insert on public.chain_transactions to authenticated;
     grant select, insert on public.revenue_epochs to authenticated;

@@ -4,6 +4,7 @@ import {
   REVENUE_PUBLISHED_EVENT,
   decodeRevenuePublishedLogs,
   fetchVerifiedReceipt,
+  verifyRpcChainId,
 } from "./chain";
 
 const DISTRIBUTOR: `0x${string}` = "0x5FbDB2315678afecb367f032d93F642f64180aa3";
@@ -152,5 +153,27 @@ describe("decodeRevenuePublishedLogs", () => {
     expect(
       decodeRevenuePublishedLogs(logs, DISTRIBUTOR, ASSET_ID.toUpperCase() as unknown as `0x${string}`),
     ).toHaveLength(1);
+  });
+});
+
+describe("verifyRpcChainId", () => {
+  it("accepts the canonical Arbitrum Sepolia chain ID (421614)", async () => {
+    const result = await verifyRpcChainId(async () => 421614);
+    expect(result).toEqual({ ok: true, chainId: 421614 });
+  });
+
+  it("rejects a mismatched chain ID (e.g. Ethereum mainnet or local node)", async () => {
+    const mainnet = await verifyRpcChainId(async () => 1);
+    expect(mainnet).toEqual({ ok: false, reason: "mismatch", chainId: 1 });
+
+    const localAnvil = await verifyRpcChainId(async () => 31337);
+    expect(localAnvil).toEqual({ ok: false, reason: "mismatch", chainId: 31337 });
+  });
+
+  it("handles RPC errors/unavailable transport safely", async () => {
+    const errorResult = await verifyRpcChainId(async () => {
+      throw new Error("RPC endpoint unavailable / network timeout");
+    });
+    expect(errorResult).toEqual({ ok: false, reason: "rpc_error" });
   });
 });

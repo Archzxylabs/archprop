@@ -18,11 +18,16 @@ import type { SupabaseConfig } from "./config";
 
 export type UserSupabaseClient = SupabaseClient;
 
-export function createUserClient(config: SupabaseConfig, accessToken: string): UserSupabaseClient {
-  return createClient(config.url, config.anonKey, {
-    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+export function createUserClient(
+  config: SupabaseConfig,
+  accessToken?: string | null,
+): UserSupabaseClient {
+  const token = accessToken?.trim();
+  const options = {
     auth: { persistSession: false, autoRefreshToken: false },
-  });
+    ...(token ? { global: { headers: { Authorization: `Bearer ${token}` } } } : {}),
+  };
+  return createClient(config.url, config.anonKey, options);
 }
 
 export function createServiceClient(config: SupabaseConfig): UserSupabaseClient {

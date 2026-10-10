@@ -9,9 +9,9 @@
  */
 
 import type { NextRequest } from "next/server";
-import { loadConfig, describe } from "@/lib/server/config";
-import { createUserClient } from "@/lib/server/supabase";
-import { jsonError, notFound, serviceUnavailable, optionalBearerToken } from "@/lib/server/http";
+import { loadConfig, describe } from "../../../../lib/server/config";
+import { createUserClient } from "../../../../lib/server/supabase";
+import { jsonError, notFound, serviceUnavailable, optionalBearerToken } from "../../../../lib/server/http";
 import {
   toPropertyDto,
   toDocumentDto,
@@ -22,7 +22,7 @@ import {
   type PropertyDocumentRow,
   type PropertyRow,
   type ChainTransactionRow,
-} from "@/lib/server/properties";
+} from "../../../../lib/server/properties";
 
 const PUBLIC_PROPERTY_COLUMNS =
   "id, chain_asset_id, external_id, name, slug, property_type, location, issuer_name, description, indicative_value, offering_target, token_supply, token_price, economic_rights_bps, status_cache, token_address, created_at";
@@ -52,7 +52,7 @@ export async function GET(
 
   // The property row is public presentation data, so the anon client reads it
   // under the properties_select_public policy.
-  const anonClient = createUserClient(configResult.config.supabase, "");
+  const anonClient = createUserClient(configResult.config.supabase);
 
   const propertyQuery = anonClient
     .from("properties")
@@ -67,29 +67,8 @@ export async function GET(
   }
   const property = toPropertyDto(propertyData as unknown as PropertyRow);
 
-  // Documents and chain references are private, so they must be read with the
-  // caller's own client: RLS then returns the owner's rows and nothing else.
-  // The anon client cannot see them at all, which would make the field
-  // permanently empty for everyone including the owner. The route stays public
-  // — an anonymous caller gets `documents: []` rather than a 401 — so the
-  // token is optional and an invalid one degrades instead of failing the read.
-  const callerClient = createUserClient(
-    configResult.config.supabase,
-    optionalBearerToken(request) ?? "",
-  );
-
-  const { data: documentData, error: documentError } = await callerClient
-    .from("property_documents")
-    .select("id, property_id, document_type, document_hash, storage_path, is_demo, created_at")
-    .eq("property_id", property.id)
-    .order("created_at", { ascending: true });
-
-  if (documentError) {
-    return jsonError(500, "query_failed", "Documents could not be loaded.");
-  }
-  const documents = ((documentData ?? []) as unknown as PropertyDocumentRow[]).map(toDocumentDto);
-
-  const { data: transactionData, error: transactionError } = await callerClient
+  // Chain references are public presentation cache; read under the anon client.
+  const { data: transactionData, error: transactionError } = await anonClient
     .from("chain_transactions")
     .select("id, tx_hash, event_name, block_number")
     .eq("property_id", property.id)
@@ -101,6 +80,26 @@ export async function GET(
   const chainCache = ((transactionData ?? []) as unknown as ChainTransactionRow[]).map(
     toChainTransactionDto,
   );
+
+  // Documents are owner-private. Anon callers must receive documents: []
+  // without querying private property_documents as anon. For an authenticated
+  // owner, documents are read under that user's JWT and RLS. A malformed or
+  // invalid optional token must not turn a public detail request into a 500
+  // or expose documents.
+  let documents: DocumentDto[] = [];
+  const token = optionalBearerToken(request);
+  if (token) {
+    const callerClient = createUserClient(configResult.config.supabase, token);
+    const { data: documentData, error: documentError } = await callerClient
+      .from("property_documents")
+      .select("id, property_id, document_type, document_hash, storage_path, is_demo, created_at")
+      .eq("property_id", property.id)
+      .order("created_at", { ascending: true });
+
+    if (!documentError && documentData) {
+      documents = ((documentData ?? []) as unknown as PropertyDocumentRow[]).map(toDocumentDto);
+    }
+  }
 
   return Response.json({
     property,

@@ -7,11 +7,12 @@
  */
 
 import type { NextRequest } from "next/server";
-import { loadConfig, describe } from "@/lib/server/config";
-import { createUserClient } from "@/lib/server/supabase";
+import { loadConfig, describe } from "../../../lib/server/config";
+import { createUserClient } from "../../../lib/server/supabase";
 import {
   readJsonBody,
   requireAuth,
+  optionalBearerToken,
   serviceUnavailable,
   forbidden,
   validationError,
@@ -20,14 +21,14 @@ import {
   isPermissionDenied,
   jsonError,
   badRequest,
-} from "@/lib/server/http";
-import { createPropertySchema, listPropertiesQuerySchema } from "@/lib/server/schemas";
-import { deriveSlugWithSuffix } from "@/lib/server/slug";
+} from "../../../lib/server/http";
+import { createPropertySchema, listPropertiesQuerySchema } from "../../../lib/server/schemas";
+import { deriveSlugWithSuffix } from "../../../lib/server/slug";
 import {
   toPropertyDto,
   type PropertyDto,
   type PropertyRow,
-} from "@/lib/server/properties";
+} from "../../../lib/server/properties";
 
 /** Columns safe for the public presentation contract. */
 const PUBLIC_PROPERTY_COLUMNS =
@@ -53,10 +54,8 @@ export async function GET(request: NextRequest) {
 
   // Reads run as the caller when they are signed in, so RLS applies; otherwise
   // the anon client, which can only see the public presentation columns.
-  const authHeader = request.headers.get("authorization");
-  const client = authHeader
-    ? createUserClient(configResult.config.supabase, authHeader.replace(/^Bearer\s+/i, ""))
-    : createUserClient(configResult.config.supabase, "");
+  const token = optionalBearerToken(request);
+  const client = createUserClient(configResult.config.supabase, token);
 
   let query = client
     .from("properties")
@@ -90,7 +89,7 @@ export async function POST(request: NextRequest) {
     return unavailable(configResult.error);
   }
 
-  const anonClient = createUserClient(configResult.config.supabase, "");
+  const anonClient = createUserClient(configResult.config.supabase);
   const auth = await requireAuth(anonClient, request);
   if (!auth.ok) {
     return auth.response;

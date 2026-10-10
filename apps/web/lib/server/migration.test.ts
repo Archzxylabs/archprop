@@ -173,6 +173,53 @@ describe("Migration DDL privilege regression tests (Static Schema Analysis)", ()
     });
   });
 
+  describe("authenticated role users table permissions (non-self-assignable role and wallet)", () => {
+    it("grants authenticated role only SELECT on public.users and withholds INSERT, UPDATE, DELETE", () => {
+      // Authenticated must have SELECT to read their own profile
+      expect(sql).toMatch(/grant\s+select\s+on\s+public\.users\s+to\s+authenticated;/i);
+
+      // Authenticated MUST NOT have INSERT, UPDATE, or DELETE on public.users
+      expect(sql).not.toMatch(
+        /grant\s+[^;]*\b(insert|update|delete|all)\b[^;]*\bon\s+public\.users\s+to\s+authenticated/i,
+      );
+    });
+
+    it("does not allow client self-assignment of role or wallet_address via RLS policies", () => {
+      // Policies allowing direct client update or insert must be dropped
+      expect(sql).not.toMatch(/create\s+policy\s+users_update_own/i);
+      expect(sql).not.toMatch(/create\s+policy\s+users_insert_own/i);
+
+      // Explicit drop statements ensure idempotency
+      expect(sql).toMatch(/drop\s+policy\s+if\s+exists\s+users_update_own\s+on\s+public\.users;/i);
+      expect(sql).toMatch(/drop\s+policy\s+if\s+exists\s+users_insert_own\s+on\s+public\.users;/i);
+    });
+
+    it("ensures handle_new_auth_user trigger provisions mirror rows under SECURITY DEFINER", () => {
+      const triggerFuncMatch =
+        /create\s+or\s+replace\s+function\s+public\.handle_new_auth_user\(\)[\s\S]*?\$\$;/i.exec(sql);
+      expect(triggerFuncMatch).not.toBeNull();
+      const triggerFuncDef = triggerFuncMatch?.[0] ?? "";
+
+      expect(triggerFuncDef).toMatch(/\bsecurity\s+definer\b/i);
+      expect(triggerFuncDef).toMatch(/insert\s+into\s+public\.users/i);
+      expect(sql).toMatch(/create\s+trigger\s+on_auth_user_created/i);
+    });
+
+    it("keeps owner_user_id and address_private inaccessible to anon and authenticated raw SELECT", () => {
+      // Verify anon grants omit private columns
+      const anonGrantMatch = /grant\s+select\s*\(([^)]+)\)\s+on\s+public\.properties\s+to\s+anon/is.exec(sql);
+      const anonCols = (anonGrantMatch?.[1] ?? "").split(",").map((c) => c.trim().toLowerCase());
+      expect(anonCols).not.toContain("owner_user_id");
+      expect(anonCols).not.toContain("address_private");
+
+      // Verify authenticated grants omit private columns
+      const authGrantMatch = /grant\s+select\s*\(([^)]+)\)\s+on\s+public\.properties\s+to\s+authenticated/is.exec(sql);
+      const authCols = (authGrantMatch?.[1] ?? "").split(",").map((c) => c.trim().toLowerCase());
+      expect(authCols).not.toContain("owner_user_id");
+      expect(authCols).not.toContain("address_private");
+    });
+  });
+
   describe("Distinction between static and live integration tests", () => {
     it("reports verification mode clearly", () => {
       const liveDbConfigured = Boolean(
