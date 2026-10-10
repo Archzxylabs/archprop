@@ -12,18 +12,19 @@ Validates `/owner/property/new` and `/property/ARCHPROP-001` with fail-closed as
 1. **Responsive Viewports (Fail-Closed Layout Evaluation)**:
    - Evaluates widths `320px`, `375px`, `768px`, `1024px`, and `1440px`.
    - Requires valid, positive, finite `innerWidth` and document `scrollWidth` from the browser. Never substitutes `0` or ignores runtime exceptions.
+   - Verifies HTTP 200 via preflight fetch and fail-closed `Page.navigate` errorText checks on every route.
    - Verifies no document-level horizontal overflow (`scrollWidth <= innerWidth + 1`).
    - Verifies that zero active interactive controls (buttons, inputs, links) are clipped outside the viewport bounds (`rect.right > winWidth + 1` or `rect.left < -1`).
 
-2. **Real CDP-Driven Keyboard Navigation**:
+2. **Real CDP-Driven Keyboard Navigation & Exit Boundary**:
    - Dispatches actual browser `Tab` key events (`Input.dispatchKeyEvent` with `key: "Tab"`) sequentially through Chrome DevTools Protocol.
    - Inspects `document.activeElement` after each Tab step to verify the exact enabled control receives focus in order.
-   - Confirms that disabled action buttons are excluded from the enabled tab sequence and do not receive tab focus.
+   - Dispatches a post-last-Tab event after the final enabled control: validates that the disabled action button is strictly skipped and that `document.activeElement` exists and is outside the relevant form/panel (`isInside === false`). Focus remaining inside or throwing an exception fails closed.
 
 3. **Observable Focus Indicators**:
-   - Inspects actual computed styles (`window.getComputedStyle`) on focused controls.
-   - Verifies browser-observable focus indicators: computed outline (`outlineStyle !== "none"`, `outlineWidth > 0`), computed focus ring (`boxShadow` containing ring spread), or brand focus border color.
-   - Rejects passive class-name checks alone as insufficient evidence.
+   - Verifies that focused controls match the browser's `:focus-visible` pseudo-class (`el.matches(":focus-visible") === true`).
+   - Inspects actual computed styles (`window.getComputedStyle`) on focused controls for meaningful indicators: computed outline (`outlineStyle !== "none"`, `outlineWidth > 0`) or active focus ring box-shadow (`boxShadow` containing active ring spread, e.g. 2px).
+   - Rejects passive class-name checks alone and rejects static border color alone as insufficient evidence.
 
 4. **Screen-Reader & ARIA Relationships**:
    - Preset chips provide explicit toggle feedback via `aria-pressed="true"` / `aria-pressed="false"`.

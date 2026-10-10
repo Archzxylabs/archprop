@@ -30,11 +30,11 @@ export interface ActiveElementFocusInfo {
   id: string;
   text?: string | undefined;
   disabled?: boolean | undefined;
+  matchesFocusVisible?: boolean | undefined;
   outlineStyle?: string | undefined;
   outlineWidth?: string | undefined;
   boxShadow?: string | undefined;
   borderColor?: string | undefined;
-  hasObservableFocus?: boolean | undefined;
 }
 
 export interface TabStepResult {
@@ -45,6 +45,16 @@ export interface TabStepResult {
   actualTag: string;
   matchesExpected: boolean;
   hasObservableFocus: boolean;
+  failureReason?: string | undefined;
+}
+
+export interface FocusExitResult {
+  success: boolean;
+  activeTag?: string | undefined;
+  activeId?: string | undefined;
+  activeText?: string | undefined;
+  isInsideContainer: boolean;
+  skippedDisabledButton: boolean;
   failureReason?: string | undefined;
 }
 
@@ -71,12 +81,15 @@ export interface PresetChipCheck {
 export interface RouteAccessibilityResult {
   route: string;
   status: "PASS" | "FAIL";
+  navigationValid: boolean;
   tabSequenceValid: boolean;
+  focusExitValid: boolean;
   visibleFocusValid: boolean;
   ariaAssociationsValid: boolean;
   disabledActionValid: boolean;
   presetChipsValid?: boolean | undefined;
   tabSteps: TabStepResult[];
+  focusExitResult?: FocusExitResult | undefined;
   ariaChecks: AriaAssociationCheck[];
   actionChecks: ActionButtonCheck[];
   presetChecks?: PresetChipCheck[] | undefined;

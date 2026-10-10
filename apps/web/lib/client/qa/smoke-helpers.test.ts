@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  evaluateFocusEvidence,
+  evaluateFocusExit,
   evaluateTabStep,
   evaluateViewportLayout,
   EXPECTED_INVESTMENT_PANEL_ENABLED_TAB_SEQUENCE,
   EXPECTED_OWNER_FORM_ENABLED_TAB_SEQUENCE,
   formatSmokeReport,
-  hasObservableFocusStyling,
   INVESTMENT_PREREQUISITE,
   OWNER_REGISTRATION_PREREQUISITE,
   parseCliArgs,
@@ -192,61 +193,135 @@ describe("smoke-helpers", () => {
     });
   });
 
-  describe("hasObservableFocusStyling", () => {
-    it("recognizes visible outline styling", () => {
-      const check = hasObservableFocusStyling({
+  describe("evaluateFocusEvidence (strict keyboard focus evidence)", () => {
+    it("fails when matchesFocusVisible is false or undefined", () => {
+      const result1 = evaluateFocusEvidence({
+        matchesFocusVisible: false,
         outlineStyle: "solid",
         outlineWidth: "2px",
       });
-      expect(check.hasObservableFocus).toBe(true);
-      expect(check.details).toContain("outline: solid 2px");
-    });
+      expect(result1.valid).toBe(false);
+      expect(result1.reason).toContain("does not match :focus-visible");
 
-    it("recognizes visible focus-ring or box-shadow", () => {
-      const check = hasObservableFocusStyling({
-        outlineStyle: "none",
-        outlineWidth: "0px",
-        boxShadow: "rgba(0, 0, 0, 0) 0px 0px 0px 0px, oklab(...) 0px 0px 0px 2px",
+      const result2 = evaluateFocusEvidence({
+        matchesFocusVisible: undefined,
+        outlineStyle: "solid",
+        outlineWidth: "2px",
       });
-      expect(check.hasObservableFocus).toBe(true);
-      expect(check.details).toContain("focus-ring/boxShadow");
+      expect(result2.valid).toBe(false);
     });
 
-    it("recognizes brand focus border color", () => {
-      const check = hasObservableFocusStyling({
-        outlineStyle: "none",
-        outlineWidth: "0px",
-        boxShadow: "none",
-        borderColor: "rgb(15, 118, 110)",
-      });
-      expect(check.hasObservableFocus).toBe(true);
-      expect(check.details).toContain("focus-borderColor");
-    });
-
-    it("rejects when no observable focus styling is present", () => {
-      const check = hasObservableFocusStyling({
+    it("fails when matchesFocusVisible is true but no outline or ring exists", () => {
+      const result = evaluateFocusEvidence({
+        matchesFocusVisible: true,
         outlineStyle: "none",
         outlineWidth: "0px",
         boxShadow: "none",
-        borderColor: "rgb(212, 212, 216)",
       });
-      expect(check.hasObservableFocus).toBe(false);
-      expect(check.details).toContain("no observable computed outline");
+      expect(result.valid).toBe(false);
+      expect(result.reason).toContain("lacks a meaningful computed focus indicator");
+    });
+
+    it("fails when only drop shadow without spread is present", () => {
+      const result = evaluateFocusEvidence({
+        matchesFocusVisible: true,
+        outlineStyle: "none",
+        outlineWidth: "0px",
+        boxShadow: "rgba(0, 0, 0, 0.1) 0px 4px 6px 0px",
+      });
+      expect(result.valid).toBe(false);
+      expect(result.reason).toContain("lacks a meaningful computed focus indicator");
+    });
+
+    it("passes when matchesFocusVisible is true and outline is visible", () => {
+      const result = evaluateFocusEvidence({
+        matchesFocusVisible: true,
+        outlineStyle: "solid",
+        outlineWidth: "2px",
+      });
+      expect(result.valid).toBe(true);
+    });
+
+    it("passes when matchesFocusVisible is true and focus ring spread is present", () => {
+      const result = evaluateFocusEvidence({
+        matchesFocusVisible: true,
+        outlineStyle: "none",
+        outlineWidth: "0px",
+        boxShadow: "rgba(0, 0, 0, 0) 0px 0px 0px 0px, oklab(0.510931 ...) 0px 0px 0px 2px",
+      });
+      expect(result.valid).toBe(true);
+    });
+  });
+
+  describe("evaluateFocusExit (fail-closed exit boundary checks)", () => {
+    it("fails when evaluation exception is reported", () => {
+      const result = evaluateFocusExit({
+        evalException: "CDP connection lost",
+        activeElement: null,
+        isInsideContainer: false,
+        disabledButtonText: "Register property",
+      });
+      expect(result.success).toBe(false);
+      expect(result.failureReason).toContain("threw an exception: CDP connection lost");
+    });
+
+    it("fails when activeElement is null or missing tag", () => {
+      const result = evaluateFocusExit({
+        activeElement: null,
+        isInsideContainer: false,
+        disabledButtonText: "Register property",
+      });
+      expect(result.success).toBe(false);
+      expect(result.failureReason).toContain("could not be resolved or was null");
+    });
+
+    it("fails when activeElement is the disabled action button", () => {
+      const result = evaluateFocusExit({
+        activeElement: { tag: "BUTTON", id: "", text: "Register property" },
+        isInsideContainer: true,
+        disabledButtonText: "Register property",
+      });
+      expect(result.success).toBe(false);
+      expect(result.skippedDisabledButton).toBe(false);
+      expect(result.failureReason).toContain("improperly received tab focus");
+    });
+
+    it("fails when focus remained inside the form/panel", () => {
+      const result = evaluateFocusExit({
+        activeElement: { tag: "INPUT", id: "tokenPrice", text: "" },
+        isInsideContainer: true,
+        disabledButtonText: "Register property",
+      });
+      expect(result.success).toBe(false);
+      expect(result.isInsideContainer).toBe(true);
+      expect(result.failureReason).toContain("Focus remained inside the container");
+    });
+
+    it("passes when focus successfully moved outside and skipped disabled button", () => {
+      const result = evaluateFocusExit({
+        activeElement: { tag: "A", id: "back-link", text: "← Back to your assets" },
+        isInsideContainer: false,
+        disabledButtonText: "Register property",
+      });
+      expect(result.success).toBe(true);
+      expect(result.isInsideContainer).toBe(false);
+      expect(result.skippedDisabledButton).toBe(true);
+      expect(result.failureReason).toBeUndefined();
     });
   });
 
   describe("evaluateTabStep", () => {
-    it("passes when active element matches expected and has focus styling", () => {
+    it("passes when active element matches expected and has :focus-visible with focus ring", () => {
       const step = evaluateTabStep(
         "externalId",
         {
           tag: "INPUT",
           id: "externalId",
           disabled: false,
+          matchesFocusVisible: true,
           outlineStyle: "none",
           outlineWidth: "2px",
           boxShadow: "oklab(...) 0px 0px 0px 2px",
-          borderColor: "rgb(15, 118, 110)",
         },
         1
       );
@@ -255,7 +330,7 @@ describe("smoke-helpers", () => {
       expect(step.failureReason).toBeUndefined();
     });
 
-    it("matches button by text label", () => {
+    it("matches button by text label with visible outline", () => {
       const step = evaluateTabStep(
         "Reset to Villa Nusa preset",
         {
@@ -263,6 +338,7 @@ describe("smoke-helpers", () => {
           id: "",
           text: "Reset to Villa Nusa preset",
           disabled: false,
+          matchesFocusVisible: true,
           outlineStyle: "solid",
           outlineWidth: "2px",
         },
@@ -279,6 +355,7 @@ describe("smoke-helpers", () => {
           tag: "INPUT",
           id: "wrongField",
           disabled: false,
+          matchesFocusVisible: true,
           outlineStyle: "solid",
           outlineWidth: "2px",
         },
@@ -295,6 +372,7 @@ describe("smoke-helpers", () => {
           tag: "BUTTON",
           id: "Register property",
           disabled: true,
+          matchesFocusVisible: true,
           outlineStyle: "solid",
           outlineWidth: "2px",
         },
@@ -304,23 +382,22 @@ describe("smoke-helpers", () => {
       expect(step.failureReason).toContain("while marked disabled");
     });
 
-    it("fails when focused element lacks observable focus styling", () => {
+    it("fails when focused element lacks :focus-visible matching", () => {
       const step = evaluateTabStep(
         "name",
         {
           tag: "INPUT",
           id: "name",
           disabled: false,
-          outlineStyle: "none",
-          outlineWidth: "0px",
-          boxShadow: "none",
-          borderColor: "rgb(200, 200, 200)",
+          matchesFocusVisible: false,
+          outlineStyle: "solid",
+          outlineWidth: "2px",
         },
         2
       );
       expect(step.matchesExpected).toBe(true);
       expect(step.hasObservableFocus).toBe(false);
-      expect(step.failureReason).toContain("lacks observable focus styling");
+      expect(step.failureReason).toContain("does not match :focus-visible");
     });
   });
 
@@ -457,7 +534,7 @@ describe("smoke-helpers", () => {
   });
 
   describe("formatSmokeReport", () => {
-    it("formats a complete summary report with observed tab steps", () => {
+    it("formats a complete summary report with observed tab steps and focus exit", () => {
       const summary: SmokeSummary = {
         overallStatus: "PASS",
         baseUrl: "http://localhost:3000",
@@ -478,8 +555,10 @@ describe("smoke-helpers", () => {
           {
             route: "/owner/property/new",
             status: "PASS",
+            navigationValid: true,
             tabSequenceValid: true,
             visibleFocusValid: true,
+            focusExitValid: true,
             ariaAssociationsValid: true,
             disabledActionValid: true,
             tabSteps: [
@@ -493,6 +572,13 @@ describe("smoke-helpers", () => {
                 hasObservableFocus: true,
               },
             ],
+            focusExitResult: {
+              success: true,
+              activeTag: "A",
+              activeText: "← Back to your assets",
+              isInsideContainer: false,
+              skippedDisabledButton: true,
+            },
             ariaChecks: [],
             actionChecks: [],
             failures: [],
@@ -506,7 +592,7 @@ describe("smoke-helpers", () => {
       expect(report).toContain("Base URL:     http://localhost:3000");
       expect(report).toContain("Status:       PASS");
       expect(report).toContain("Observed Tab Steps:");
-      expect(report).toContain("Step 1: Reset to Villa Nusa preset");
+      expect(report).toContain("Focus exit result: ✓");
       expect(report).toContain("OVERALL RESULT: PASS");
     });
 

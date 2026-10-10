@@ -1,6 +1,7 @@
 import type {
   ActiveElementFocusInfo,
   CliOptions,
+  FocusExitResult,
   PresetChipCheck,
   SmokeSummary,
   TabStepResult,
@@ -191,47 +192,39 @@ export function evaluateViewportLayout(params: {
   };
 }
 
-export function hasObservableFocusStyling(computed: {
+export function evaluateFocusEvidence(info: {
+  matchesFocusVisible?: boolean | undefined;
   outlineStyle?: string | undefined;
   outlineWidth?: string | undefined;
   boxShadow?: string | undefined;
-  borderColor?: string | undefined;
-}): { hasObservableFocus: boolean; details: string } {
+}): { valid: boolean; reason?: string } {
+  if (info.matchesFocusVisible !== true) {
+    return {
+      valid: false,
+      reason: "Element does not match :focus-visible pseudo-class when keyboard-focused",
+    };
+  }
+
   const hasOutline =
-    computed.outlineStyle !== undefined &&
-    computed.outlineStyle !== "none" &&
-    parseFloat(computed.outlineWidth || "0") > 0;
+    info.outlineStyle !== undefined &&
+    info.outlineStyle !== "none" &&
+    parseFloat(info.outlineWidth || "0") > 0;
 
-  // Focus ring via box-shadow (e.g. Tailwind ring-2)
-  const hasRingOrShadow =
-    computed.boxShadow !== undefined &&
-    computed.boxShadow !== "none" &&
-    computed.boxShadow.trim().length > 0 &&
-    !computed.boxShadow.startsWith("none");
+  // Meaningful focus ring box-shadow: requires active ring spread (e.g. Tailwind 2px ring: "0px 0px 0px 2px")
+  const hasRingShadow =
+    info.boxShadow !== undefined &&
+    info.boxShadow !== "none" &&
+    /0px\s+0px\s+0px\s+[1-9]\d*px/.test(info.boxShadow);
 
-  // Focus brand border color
-  const hasBrandBorder =
-    computed.borderColor !== undefined &&
-    (computed.borderColor.includes("15, 118, 110") ||
-      computed.borderColor.includes("35, 107, 104") ||
-      computed.borderColor.includes("35, 53, 54"));
+  if (!hasOutline && !hasRingShadow) {
+    return {
+      valid: false,
+      reason:
+        "Element matches :focus-visible but lacks a meaningful computed focus indicator (requires outline or focus ring; static border alone is insufficient)",
+    };
+  }
 
-  const hasObservableFocus = hasOutline || hasRingOrShadow || hasBrandBorder;
-
-  const styleParts: string[] = [];
-  if (hasOutline) styleParts.push(`outline: ${computed.outlineStyle} ${computed.outlineWidth}`);
-  if (hasRingOrShadow) styleParts.push("focus-ring/boxShadow");
-  if (hasBrandBorder) styleParts.push(`focus-borderColor: ${computed.borderColor}`);
-
-  const details =
-    styleParts.length > 0
-      ? styleParts.join(", ")
-      : "no observable computed outline, ring, or brand border";
-
-  return {
-    hasObservableFocus,
-    details,
-  };
+  return { valid: true };
 }
 
 export function evaluateTabStep(
@@ -243,15 +236,15 @@ export function evaluateTabStep(
     activeElement.id === expectedControl ||
     (activeElement.text !== undefined && activeElement.text.includes(expectedControl));
 
-  const focusCheck = hasObservableFocusStyling(activeElement);
+  const focusEvidence = evaluateFocusEvidence(activeElement);
 
   let failureReason: string | undefined;
   if (!matches) {
     failureReason = `Expected focus on "${expectedControl}", but document.activeElement was "${activeElement.id || activeElement.text || activeElement.tag}"`;
   } else if (activeElement.disabled) {
     failureReason = `Control "${expectedControl}" received tab focus while marked disabled!`;
-  } else if (!focusCheck.hasObservableFocus) {
-    failureReason = `Control "${expectedControl}" focused but lacks observable focus styling (${focusCheck.details})`;
+  } else if (!focusEvidence.valid) {
+    failureReason = `Control "${expectedControl}" focused but lacks valid focus indicator (${focusEvidence.reason})`;
   }
 
   return {
@@ -261,8 +254,72 @@ export function evaluateTabStep(
     actualText: activeElement.text || "",
     actualTag: activeElement.tag,
     matchesExpected: matches && !activeElement.disabled,
-    hasObservableFocus: focusCheck.hasObservableFocus,
+    hasObservableFocus: focusEvidence.valid,
     failureReason,
+  };
+}
+
+export function evaluateFocusExit(params: {
+  evalException?: string | undefined;
+  activeElement: { tag?: string | undefined; id?: string | undefined; text?: string | undefined } | null | undefined;
+  isInsideContainer: boolean | undefined;
+  disabledButtonText: string;
+}): FocusExitResult {
+  const { evalException, activeElement, isInsideContainer, disabledButtonText } = params;
+
+  if (evalException) {
+    return {
+      success: false,
+      isInsideContainer: true,
+      skippedDisabledButton: false,
+      failureReason: `Focus exit evaluation threw an exception: ${evalException}`,
+    };
+  }
+
+  if (!activeElement || !activeElement.tag) {
+    return {
+      success: false,
+      isInsideContainer: false,
+      skippedDisabledButton: false,
+      failureReason: "Post-last-Tab activeElement could not be resolved or was null",
+    };
+  }
+
+  const isActionBtn =
+    (activeElement.text && activeElement.text.includes(disabledButtonText)) ||
+    activeElement.id === disabledButtonText;
+
+  if (isActionBtn) {
+    return {
+      success: false,
+      activeTag: activeElement.tag,
+      activeId: activeElement.id,
+      activeText: activeElement.text,
+      isInsideContainer: true,
+      skippedDisabledButton: false,
+      failureReason: `Disabled action button "${disabledButtonText}" improperly received tab focus!`,
+    };
+  }
+
+  if (isInsideContainer === true) {
+    return {
+      success: false,
+      activeTag: activeElement.tag,
+      activeId: activeElement.id,
+      activeText: activeElement.text,
+      isInsideContainer: true,
+      skippedDisabledButton: true,
+      failureReason: `Focus remained inside the container on "${activeElement.id || activeElement.text || activeElement.tag}" after the final enabled control`,
+    };
+  }
+
+  return {
+    success: true,
+    activeTag: activeElement.tag,
+    activeId: activeElement.id,
+    activeText: activeElement.text,
+    isInsideContainer: false,
+    skippedDisabledButton: true,
   };
 }
 
@@ -389,8 +446,10 @@ export function formatSmokeReport(summary: SmokeSummary): string {
     for (const ar of summary.routeAccessibilityResults) {
       const tag = ar.status === "PASS" ? "[PASS]" : "[FAIL]";
       lines.push(`  ${tag.padEnd(7)} Route: ${ar.route}`);
+      lines.push(`          Navigation:     ${ar.navigationValid ? "PASS" : "FAIL"}`);
       lines.push(`          Tab sequence:   ${ar.tabSequenceValid ? "PASS" : "FAIL"}`);
       lines.push(`          Visible focus:  ${ar.visibleFocusValid ? "PASS" : "FAIL"}`);
+      lines.push(`          Focus exit:     ${ar.focusExitValid ? "PASS" : "FAIL"}`);
       lines.push(`          ARIA relations: ${ar.ariaAssociationsValid ? "PASS" : "FAIL"}`);
       lines.push(`          Disabled locks: ${ar.disabledActionValid ? "PASS" : "FAIL"}`);
       if (ar.presetChipsValid !== undefined) {
@@ -404,6 +463,12 @@ export function formatSmokeReport(summary: SmokeSummary): string {
             `            ${stepTag} Step ${ts.step}: ${ts.expectedControl.padEnd(28)} -> focused: ${ts.actualId || ts.actualText || ts.actualTag}`
           );
         }
+      }
+      if (ar.focusExitResult) {
+        const exitTag = ar.focusExitResult.success ? "✓" : "✗";
+        lines.push(
+          `          Focus exit result: ${exitTag} (active: ${ar.focusExitResult.activeId || ar.focusExitResult.activeText || ar.focusExitResult.activeTag || "none"}, inside: ${ar.focusExitResult.isInsideContainer})`
+        );
       }
       if (ar.failures.length > 0) {
         for (const failure of ar.failures) {

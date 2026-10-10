@@ -4,7 +4,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
 import { createServer } from "node:net";
 // @ts-expect-error Node TS execution requires .ts extension in imports
-import { evaluateTabStep, evaluateViewportLayout, EXPECTED_INVESTMENT_PANEL_ENABLED_TAB_SEQUENCE, EXPECTED_OWNER_FORM_ENABLED_TAB_SEQUENCE, formatSmokeReport, INVESTMENT_PREREQUISITE, OWNER_REGISTRATION_PREREQUISITE, parseCliArgs, STANDARD_VIEWPORTS, TARGET_ROUTES, validateActionPrerequisite, validateAriaDescribedByTargets, validatePresetChips } from "./smoke-helpers.ts";
+import { evaluateFocusExit, evaluateTabStep, evaluateViewportLayout, EXPECTED_INVESTMENT_PANEL_ENABLED_TAB_SEQUENCE, EXPECTED_OWNER_FORM_ENABLED_TAB_SEQUENCE, formatSmokeReport, INVESTMENT_PREREQUISITE, OWNER_REGISTRATION_PREREQUISITE, parseCliArgs, STANDARD_VIEWPORTS, TARGET_ROUTES, validateActionPrerequisite, validateAriaDescribedByTargets, validatePresetChips } from "./smoke-helpers.ts";
 import type { ActiveElementFocusInfo, CliOptions, RouteAccessibilityResult, SmokeSummary, TabStepResult, ViewportResult } from "./types.ts";
 
 interface CdpMessage {
@@ -396,11 +396,29 @@ export async function runBrowserSmokeCheck(
     // Check 7A: /owner/property/new
     {
       const route = "/owner/property/new";
-      await cdpClient.send("Page.navigate", { url: `${options.baseUrl}${route}` });
-      await sleep(600);
-
+      const fullUrl = `${options.baseUrl}${route}`;
       const routeFailures: string[] = [];
       const tabSteps: TabStepResult[] = [];
+      let navigationValid = true;
+
+      // Fail-closed navigation check
+      try {
+        const routeRes = await fetch(fullUrl, { method: "GET" });
+        if (!routeRes.ok) {
+          navigationValid = false;
+          routeFailures.push(`Route pre-flight check returned HTTP ${routeRes.status} ${routeRes.statusText}`);
+        }
+      } catch (err: unknown) {
+        navigationValid = false;
+        routeFailures.push(`Route pre-flight fetch failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+
+      const navRes = await cdpClient.send<{ errorText?: string }>("Page.navigate", { url: fullUrl });
+      if (navRes.errorText) {
+        navigationValid = false;
+        routeFailures.push(`CDP Page.navigate error: ${navRes.errorText}`);
+      }
+      await sleep(600);
 
       // Step A: Focus the element preceding the property form in tab order
       interface FocusPrepEval {
@@ -411,6 +429,7 @@ export async function runBrowserSmokeCheck(
             precedingTag: string;
           };
         };
+        exceptionDetails?: { text?: string };
       }
 
       const focusPrep = await cdpClient.send<FocusPrepEval>("Runtime.evaluate", {
@@ -441,7 +460,9 @@ export async function runBrowserSmokeCheck(
         returnByValue: true,
       });
 
-      if (!focusPrep.result?.value?.focusedPreceding) {
+      if (focusPrep.exceptionDetails) {
+        routeFailures.push(`Exception initializing focus: ${focusPrep.exceptionDetails.text || "unknown"}`);
+      } else if (!focusPrep.result?.value?.focusedPreceding) {
         routeFailures.push("Unable to initialize keyboard tab navigation before property details form.");
       }
 
@@ -454,7 +475,7 @@ export async function runBrowserSmokeCheck(
           result?: {
             value?: ActiveElementFocusInfo;
           };
-          exceptionDetails?: { text?: string };
+          exceptionDetails?: { text?: string; exception?: { description?: string } };
         }
 
         const activeEval = await cdpClient.send<ActiveElementEval>("Runtime.evaluate", {
@@ -467,6 +488,7 @@ export async function runBrowserSmokeCheck(
               id: el.id,
               text: el.textContent?.trim().slice(0, 35) || '',
               disabled: el.disabled || false,
+              matchesFocusVisible: el.matches(':focus-visible'),
               outlineStyle: cs.outlineStyle,
               outlineWidth: cs.outlineWidth,
               boxShadow: cs.boxShadow,
@@ -476,13 +498,18 @@ export async function runBrowserSmokeCheck(
           returnByValue: true,
         });
 
-        const activeElement = activeEval.result?.value || {
-          tag: "UNKNOWN",
-          id: "",
-          text: "",
-          disabled: false,
-        };
+        if (activeEval.exceptionDetails) {
+          const detailMsg = activeEval.exceptionDetails.text || activeEval.exceptionDetails.exception?.description || "Evaluation error";
+          routeFailures.push(`Tab step ${i + 1} (${expectedControl}) threw evaluation exception: ${detailMsg}`);
+          continue;
+        }
 
+        if (!activeEval.result || activeEval.result.value === undefined || activeEval.result.value === null) {
+          routeFailures.push(`Tab step ${i + 1} (${expectedControl}) returned no activeElement value`);
+          continue;
+        }
+
+        const activeElement = activeEval.result.value;
         const stepResult = evaluateTabStep(expectedControl, activeElement, i + 1);
         tabSteps.push(stepResult);
 
@@ -491,32 +518,49 @@ export async function runBrowserSmokeCheck(
         }
       }
 
-      // Step C: Send one more Tab and verify focus does NOT land on the disabled Register button
+      // Step C: Send another real Tab event and verify focus exits form boundary
       await sendTabKey(cdpClient);
       interface PostTabEval {
         result?: {
           value?: {
-            activeId: string;
-            activeTag: string;
-            activeText: string;
+            activeTag: string | null;
+            activeId: string | null;
+            activeText: string | null;
+            isInsideContainer: boolean;
           };
         };
+        exceptionDetails?: { text?: string; exception?: { description?: string } };
       }
 
       const postTab = await cdpClient.send<PostTabEval>("Runtime.evaluate", {
         expression: `(() => {
+          const form = document.querySelector('form[aria-label="Property details"]');
           const el = document.activeElement;
+          const isInside = form ? form.contains(el) : false;
           return {
-            activeId: el?.id || '',
-            activeTag: el?.tagName || '',
-            activeText: el?.textContent?.trim().slice(0, 30) || '',
+            activeTag: el ? el.tagName : null,
+            activeId: el ? el.id : null,
+            activeText: el ? el.textContent?.trim().slice(0, 30) : null,
+            isInsideContainer: isInside,
           };
         })()`,
         returnByValue: true,
       });
 
-      if (postTab.result?.value?.activeText.includes("Register property")) {
-        routeFailures.push("Disabled action button 'Register property' improperly received tab focus!");
+      const exitEvalException = postTab.exceptionDetails
+        ? postTab.exceptionDetails.text || postTab.exceptionDetails.exception?.description || "Unknown exception"
+        : undefined;
+
+      const exitData = postTab.result?.value;
+      const focusExit = evaluateFocusExit({
+        evalException: exitEvalException,
+        activeElement: exitData ? { tag: exitData.activeTag || undefined, id: exitData.activeId || undefined, text: exitData.activeText || undefined } : null,
+        isInsideContainer: exitData?.isInsideContainer,
+        disabledButtonText: "Register property",
+      });
+
+      if (!focusExit.success && focusExit.failureReason) {
+        routeFailures.push(focusExit.failureReason);
       }
 
       // Step D: Separately verify disabled action state & prerequisite
@@ -529,6 +573,7 @@ export async function runBrowserSmokeCheck(
             prerequisiteText?: string;
           };
         };
+        exceptionDetails?: { text?: string };
       }
 
       const submitCheck = await cdpClient.send<SubmitButtonEval>("Runtime.evaluate", {
@@ -547,15 +592,13 @@ export async function runBrowserSmokeCheck(
         returnByValue: true,
       });
 
-      const submitData = submitCheck.result?.value || {
-        disabled: false,
-        label: "Register property",
-        prerequisitePresent: false,
-      };
-
-      const actionPrereq = validateActionPrerequisite(submitData, OWNER_REGISTRATION_PREREQUISITE);
-      if (!actionPrereq.valid) {
-        routeFailures.push(...actionPrereq.failures);
+      if (submitCheck.exceptionDetails || !submitCheck.result?.value) {
+        routeFailures.push("Failed to evaluate submit button state and prerequisites");
+      } else {
+        const actionPrereq = validateActionPrerequisite(submitCheck.result.value, OWNER_REGISTRATION_PREREQUISITE);
+        if (!actionPrereq.valid) {
+          routeFailures.push(...actionPrereq.failures);
+        }
       }
 
       // Step E: Verify ARIA error relationships upon invalid mutation
@@ -570,6 +613,7 @@ export async function runBrowserSmokeCheck(
             domIds: string[];
           };
         };
+        exceptionDetails?: { text?: string };
       }
 
       const mutationEval = await cdpClient.send<MutationEval>("Runtime.evaluate", {
@@ -611,50 +655,57 @@ export async function runBrowserSmokeCheck(
         returnByValue: true,
       });
 
-      const mutation = mutationEval.result?.value;
-      const ariaValid =
-        mutation?.targetAriaInvalid === true &&
-        mutation?.supplyAriaInvalid === true &&
-        mutation?.priceAriaInvalid === true &&
-        mutation?.targetDescribedBy?.includes("offering-invariant-error") === true &&
-        mutation?.errorAlertId === "offering-invariant-error";
+      if (mutationEval.exceptionDetails || !mutationEval.result?.value) {
+        routeFailures.push("Failed to evaluate ARIA error relationships on invalid input mutation");
+      } else {
+        const mutation = mutationEval.result.value;
+        const ariaValid =
+          mutation.targetAriaInvalid === true &&
+          mutation.supplyAriaInvalid === true &&
+          mutation.priceAriaInvalid === true &&
+          mutation.targetDescribedBy?.includes("offering-invariant-error") === true &&
+          mutation.errorAlertId === "offering-invariant-error";
 
-      if (!ariaValid) {
-        routeFailures.push(
-          "Invariant failure does not correctly set aria-invalid and aria-describedby referencing #offering-invariant-error."
+        if (!ariaValid) {
+          routeFailures.push(
+            "Invariant failure does not correctly set aria-invalid and aria-describedby referencing #offering-invariant-error."
+          );
+        }
+
+        const ariaTargetCheck = validateAriaDescribedByTargets(
+          mutation.targetDescribedBy || null,
+          mutation.domIds || []
         );
+        if (!ariaTargetCheck.valid) {
+          routeFailures.push(
+            `ARIA targets missing: [${ariaTargetCheck.missingTargets.join(", ")}]`
+          );
+        }
       }
 
-      const ariaTargetCheck = validateAriaDescribedByTargets(
-        mutation?.targetDescribedBy || null,
-        mutation?.domIds || []
-      );
-      if (!ariaTargetCheck.valid) {
-        routeFailures.push(
-          `ARIA targets missing: [${ariaTargetCheck.missingTargets.join(", ")}]`
-        );
-      }
-
-      const tabSequenceValid = tabSteps.every((s) => s.matchesExpected);
-      const visibleFocusValid = tabSteps.every((s) => s.hasObservableFocus);
+      const tabSequenceValid = tabSteps.length === EXPECTED_OWNER_FORM_ENABLED_TAB_SEQUENCE.length && tabSteps.every((s) => s.matchesExpected);
+      const visibleFocusValid = tabSteps.length > 0 && tabSteps.every((s) => s.hasObservableFocus);
 
       const accessResult: RouteAccessibilityResult = {
         route,
         status: routeFailures.length === 0 ? "PASS" : "FAIL",
+        navigationValid,
         tabSequenceValid,
         visibleFocusValid,
-        ariaAssociationsValid: ariaValid && ariaTargetCheck.valid,
-        disabledActionValid: actionPrereq.valid,
+        focusExitValid: focusExit.success,
+        ariaAssociationsValid: !routeFailures.some((f) => f.includes("ARIA") || f.includes("Invariant")),
+        disabledActionValid: !routeFailures.some((f) => f.includes("submit") || f.includes("Register property")),
         tabSteps,
+        focusExitResult: focusExit,
         ariaChecks: [
           {
             fieldId: "offeringTarget",
-            hasAriaInvalid: mutation?.targetAriaInvalid || false,
-            ariaDescribedBy: mutation?.targetDescribedBy || null,
-            targetElementsExist: mutation?.errorAlertId !== null,
+            hasAriaInvalid: mutationEval.result?.value?.targetAriaInvalid || false,
+            ariaDescribedBy: mutationEval.result?.value?.targetDescribedBy || null,
+            targetElementsExist: mutationEval.result?.value?.errorAlertId !== null,
           },
         ],
-        actionChecks: [submitData],
+        actionChecks: [submitCheck.result?.value || { label: "Register property", disabled: false, prerequisitePresent: false }],
         failures: routeFailures,
       };
 
@@ -667,11 +718,29 @@ export async function runBrowserSmokeCheck(
     // Check 7B: /property/ARCHPROP-001
     {
       const route = "/property/ARCHPROP-001";
-      await cdpClient.send("Page.navigate", { url: `${options.baseUrl}${route}` });
-      await sleep(600);
-
+      const fullUrl = `${options.baseUrl}${route}`;
       const routeFailures: string[] = [];
       const tabSteps: TabStepResult[] = [];
+      let navigationValid = true;
+
+      // Fail-closed navigation check
+      try {
+        const routeRes = await fetch(fullUrl, { method: "GET" });
+        if (!routeRes.ok) {
+          navigationValid = false;
+          routeFailures.push(`Route pre-flight check returned HTTP ${routeRes.status} ${routeRes.statusText}`);
+        }
+      } catch (err: unknown) {
+        navigationValid = false;
+        routeFailures.push(`Route pre-flight fetch failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+
+      const navRes = await cdpClient.send<{ errorText?: string }>("Page.navigate", { url: fullUrl });
+      if (navRes.errorText) {
+        navigationValid = false;
+        routeFailures.push(`CDP Page.navigate error: ${navRes.errorText}`);
+      }
+      await sleep(600);
 
       // Step A: Focus the element preceding investment-amount in tab order
       interface FocusPrepPanelEval {
@@ -681,6 +750,7 @@ export async function runBrowserSmokeCheck(
             precedingId: string;
           };
         };
+        exceptionDetails?: { text?: string };
       }
 
       const focusPrep = await cdpClient.send<FocusPrepPanelEval>("Runtime.evaluate", {
@@ -701,7 +771,9 @@ export async function runBrowserSmokeCheck(
         returnByValue: true,
       });
 
-      if (!focusPrep.result?.value?.focusedPreceding) {
+      if (focusPrep.exceptionDetails) {
+        routeFailures.push(`Exception initializing panel focus: ${focusPrep.exceptionDetails.text || "unknown"}`);
+      } else if (!focusPrep.result?.value?.focusedPreceding) {
         routeFailures.push("Unable to initialize keyboard tab navigation before investment panel.");
       }
 
@@ -714,6 +786,7 @@ export async function runBrowserSmokeCheck(
           result?: {
             value?: ActiveElementFocusInfo;
           };
+          exceptionDetails?: { text?: string; exception?: { description?: string } };
         }
 
         const activeEval = await cdpClient.send<ActiveElementEval>("Runtime.evaluate", {
@@ -726,6 +799,7 @@ export async function runBrowserSmokeCheck(
               id: el.id,
               text: el.textContent?.trim().slice(0, 35) || '',
               disabled: el.disabled || false,
+              matchesFocusVisible: el.matches(':focus-visible'),
               outlineStyle: cs.outlineStyle,
               outlineWidth: cs.outlineWidth,
               boxShadow: cs.boxShadow,
@@ -735,13 +809,18 @@ export async function runBrowserSmokeCheck(
           returnByValue: true,
         });
 
-        const activeElement = activeEval.result?.value || {
-          tag: "UNKNOWN",
-          id: "",
-          text: "",
-          disabled: false,
-        };
+        if (activeEval.exceptionDetails) {
+          const detailMsg = activeEval.exceptionDetails.text || activeEval.exceptionDetails.exception?.description || "Evaluation error";
+          routeFailures.push(`Tab step ${i + 1} (${expectedControl}) threw evaluation exception: ${detailMsg}`);
+          continue;
+        }
 
+        if (!activeEval.result || activeEval.result.value === undefined || activeEval.result.value === null) {
+          routeFailures.push(`Tab step ${i + 1} (${expectedControl}) returned no activeElement value`);
+          continue;
+        }
+
+        const activeElement = activeEval.result.value;
         const stepResult = evaluateTabStep(expectedControl, activeElement, i + 1);
         tabSteps.push(stepResult);
 
@@ -750,26 +829,49 @@ export async function runBrowserSmokeCheck(
         }
       }
 
-      // Step C: Send one more Tab and verify focus leaves panel (does NOT enter disabled Invest button)
+      // Step C: Send another Tab and verify focus leaves investment panel boundary
       await sendTabKey(cdpClient);
       interface PostTabPanelEval {
         result?: {
           value?: {
-            activeText: string;
+            activeTag: string | null;
+            activeId: string | null;
+            activeText: string | null;
+            isInsideContainer: boolean;
           };
         };
+        exceptionDetails?: { text?: string; exception?: { description?: string } };
       }
 
       const postTab = await cdpClient.send<PostTabPanelEval>("Runtime.evaluate", {
         expression: `(() => {
+          const panel = document.querySelector('[aria-label="Investment preview"]');
           const el = document.activeElement;
-          return { activeText: el?.textContent?.trim().slice(0, 30) || '' };
+          const isInside = panel ? panel.contains(el) : false;
+          return {
+            activeTag: el ? el.tagName : null,
+            activeId: el ? el.id : null,
+            activeText: el ? el.textContent?.trim().slice(0, 30) : null,
+            isInsideContainer: isInside,
+          };
         })()`,
         returnByValue: true,
       });
 
-      if (postTab.result?.value?.activeText.includes("Invest in")) {
-        routeFailures.push("Disabled action button 'Invest in AVNUSA' improperly received tab focus!");
+      const exitEvalException = postTab.exceptionDetails
+        ? postTab.exceptionDetails.text || postTab.exceptionDetails.exception?.description || "Unknown exception"
+        : undefined;
+
+      const exitData = postTab.result?.value;
+      const focusExit = evaluateFocusExit({
+        evalException: exitEvalException,
+        activeElement: exitData ? { tag: exitData.activeTag || undefined, id: exitData.activeId || undefined, text: exitData.activeText || undefined } : null,
+        isInsideContainer: exitData?.isInsideContainer,
+        disabledButtonText: "Invest in AVNUSA",
+      });
+
+      if (!focusExit.success && focusExit.failureReason) {
+        routeFailures.push(focusExit.failureReason);
       }
 
       // Step D: Separately verify disabled action state & prerequisite
@@ -782,6 +884,7 @@ export async function runBrowserSmokeCheck(
             prerequisiteText?: string;
           };
         };
+        exceptionDetails?: { text?: string };
       }
 
       const investCheck = await cdpClient.send<InvestButtonEval>("Runtime.evaluate", {
@@ -800,15 +903,13 @@ export async function runBrowserSmokeCheck(
         returnByValue: true,
       });
 
-      const investData = investCheck.result?.value || {
-        disabled: false,
-        label: "Invest in AVNUSA",
-        prerequisitePresent: false,
-      };
-
-      const actionPrereq = validateActionPrerequisite(investData, INVESTMENT_PREREQUISITE);
-      if (!actionPrereq.valid) {
-        routeFailures.push(...actionPrereq.failures);
+      if (investCheck.exceptionDetails || !investCheck.result?.value) {
+        routeFailures.push("Failed to evaluate invest button state and prerequisites");
+      } else {
+        const actionPrereq = validateActionPrerequisite(investCheck.result.value, INVESTMENT_PREREQUISITE);
+        if (!actionPrereq.valid) {
+          routeFailures.push(...actionPrereq.failures);
+        }
       }
 
       // Step E: Preset chips aria-pressed check
@@ -818,6 +919,7 @@ export async function runBrowserSmokeCheck(
             chips: { label: string; ariaPressed: string | null }[];
           };
         };
+        exceptionDetails?: { text?: string };
       }
 
       const presetEval = await cdpClient.send<PresetEval>("Runtime.evaluate", {
@@ -835,10 +937,14 @@ export async function runBrowserSmokeCheck(
         returnByValue: true,
       });
 
-      const chips = presetEval.result?.value?.chips || [];
-      const presetCheck = validatePresetChips(chips, "1M mIDR (100 tokens)");
-      if (!presetCheck.valid) {
-        routeFailures.push(...presetCheck.failures);
+      if (presetEval.exceptionDetails || !presetEval.result?.value) {
+        routeFailures.push("Failed to evaluate preset chips aria-pressed states");
+      } else {
+        const chips = presetEval.result.value.chips;
+        const presetCheck = validatePresetChips(chips, "1M mIDR (100 tokens)");
+        if (!presetCheck.valid) {
+          routeFailures.push(...presetCheck.failures);
+        }
       }
 
       // Step F: Invalid amount error association check
@@ -851,6 +957,7 @@ export async function runBrowserSmokeCheck(
             domIds: string[];
           };
         };
+        exceptionDetails?: { text?: string };
       }
 
       const invalidAmountEval = await cdpClient.send<InvalidAmountEval>("Runtime.evaluate", {
@@ -887,42 +994,48 @@ export async function runBrowserSmokeCheck(
         returnByValue: true,
       });
 
-      const invalidAmount = invalidAmountEval.result?.value;
-      const ariaTargetCheck = validateAriaDescribedByTargets(
-        invalidAmount?.amountDescribedBy || null,
-        invalidAmount?.domIds || []
-      );
-      if (!ariaTargetCheck.valid) {
-        routeFailures.push(
-          `Investment error aria-describedby references missing targets: [${ariaTargetCheck.missingTargets.join(", ")}]`
+      if (invalidAmountEval.exceptionDetails || !invalidAmountEval.result?.value) {
+        routeFailures.push("Failed to evaluate invalid amount error relationships");
+      } else {
+        const invalidAmount = invalidAmountEval.result.value;
+        const ariaTargetCheck = validateAriaDescribedByTargets(
+          invalidAmount.amountDescribedBy || null,
+          invalidAmount.domIds || []
         );
-      }
-      if (invalidAmount?.amountAriaInvalid !== true) {
-        routeFailures.push("Amount input does not set aria-invalid='true' when value is not divisible by unit price.");
+        if (!ariaTargetCheck.valid) {
+          routeFailures.push(
+            `Investment error aria-describedby references missing targets: [${ariaTargetCheck.missingTargets.join(", ")}]`
+          );
+        }
+        if (invalidAmount.amountAriaInvalid !== true) {
+          routeFailures.push("Amount input does not set aria-invalid='true' when value is not divisible by unit price.");
+        }
       }
 
-      const tabSequenceValid = tabSteps.every((s) => s.matchesExpected);
-      const visibleFocusValid = tabSteps.every((s) => s.hasObservableFocus);
+      const tabSequenceValid = tabSteps.length === EXPECTED_INVESTMENT_PANEL_ENABLED_TAB_SEQUENCE.length && tabSteps.every((s) => s.matchesExpected);
+      const visibleFocusValid = tabSteps.length > 0 && tabSteps.every((s) => s.hasObservableFocus);
 
       const accessResult: RouteAccessibilityResult = {
         route,
         status: routeFailures.length === 0 ? "PASS" : "FAIL",
+        navigationValid,
         tabSequenceValid,
         visibleFocusValid,
-        ariaAssociationsValid: ariaTargetCheck.valid && invalidAmount?.amountAriaInvalid === true,
-        disabledActionValid: actionPrereq.valid,
-        presetChipsValid: presetCheck.valid,
+        focusExitValid: focusExit.success,
+        ariaAssociationsValid: !routeFailures.some((f) => f.includes("Investment error")),
+        disabledActionValid: !routeFailures.some((f) => f.includes("Invest in")),
         tabSteps,
+        focusExitResult: focusExit,
         ariaChecks: [
           {
             fieldId: "investment-amount",
-            hasAriaInvalid: invalidAmount?.amountAriaInvalid || false,
-            ariaDescribedBy: invalidAmount?.amountDescribedBy || null,
-            targetElementsExist: ariaTargetCheck.valid,
+            hasAriaInvalid: invalidAmountEval.result?.value?.amountAriaInvalid || false,
+            ariaDescribedBy: invalidAmountEval.result?.value?.amountDescribedBy || null,
+            targetElementsExist: invalidAmountEval.result?.value?.errorAlertId !== null,
           },
         ],
-        actionChecks: [investData],
-        presetChecks: chips,
+        actionChecks: [investCheck.result?.value || { label: "Invest in AVNUSA", disabled: false, prerequisitePresent: false }],
+        presetChecks: presetEval.result?.value?.chips,
         failures: routeFailures,
       };
 
