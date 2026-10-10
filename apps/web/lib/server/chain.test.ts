@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { encodeAbiParameters, encodeEventTopics, type Log } from "viem";
 import {
+  ASSET_CREATED_EVENT,
   REVENUE_PUBLISHED_EVENT,
+  decodeAssetCreatedLogs,
   decodeRevenuePublishedLogs,
+  fetchRegistryAsset,
   fetchVerifiedReceipt,
   verifyRpcChainId,
 } from "./chain";
@@ -173,5 +176,131 @@ describe("verifyRpcChainId", () => {
       throw new Error("RPC endpoint unavailable / network timeout");
     });
     expect(errorResult).toEqual({ ok: false, reason: "rpc_error" });
+  });
+});
+
+describe("decodeAssetCreatedLogs", () => {
+  const REGISTRY: `0x${string}` = "0x5FbDB2315678afecb367f032d93F642f64180aa3";
+  const OWNER: `0x${string}` = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
+  const METADATA_HASH: `0x${string}` = `0x${"77".repeat(32)}`;
+
+  function buildAssetCreatedLog(args: {
+    assetId: `0x${string}`;
+    owner: `0x${string}`;
+    metadataHash: `0x${string}`;
+    emitter?: `0x${string}`;
+  }): Log {
+    const topics = encodeEventTopics({
+      abi: [ASSET_CREATED_EVENT],
+      eventName: "AssetCreated",
+      args: { assetId: args.assetId, owner: args.owner },
+    });
+    const data = encodeAbiParameters(
+      [{ type: "bytes32" }],
+      [args.metadataHash],
+    );
+    return {
+      address: args.emitter ?? REGISTRY,
+      topics,
+      data,
+      blockNumber: 12_345n,
+      blockHash: "0x" + "11".repeat(32),
+      transactionHash: "0x" + "22".repeat(32),
+      transactionIndex: 0,
+      logIndex: 0,
+      removed: false,
+    } as unknown as Log;
+  }
+
+  it("decodes a matching AssetCreated log from the configured registry", () => {
+    const logs = [
+      buildAssetCreatedLog({ assetId: ASSET_ID, owner: OWNER, metadataHash: METADATA_HASH }),
+    ];
+    const decoded = decodeAssetCreatedLogs(logs, REGISTRY, ASSET_ID);
+    expect(decoded).toHaveLength(1);
+    expect(decoded[0]?.assetId).toBe(ASSET_ID);
+    expect(decoded[0]?.owner.toLowerCase()).toBe(OWNER.toLowerCase());
+    expect(decoded[0]?.metadataHash).toBe(METADATA_HASH);
+    expect(decoded[0]?.blockNumber).toBe(12_345);
+  });
+
+  it("ignores an AssetCreated log emitted by a different contract", () => {
+    const logs = [
+      buildAssetCreatedLog({
+        assetId: ASSET_ID,
+        owner: OWNER,
+        metadataHash: METADATA_HASH,
+        emitter: OTHER_CONTRACT,
+      }),
+    ];
+    expect(decodeAssetCreatedLogs(logs, REGISTRY, ASSET_ID)).toHaveLength(0);
+  });
+
+  it("ignores an AssetCreated log for a different asset ID", () => {
+    const logs = [
+      buildAssetCreatedLog({ assetId: OTHER_ASSET, owner: OWNER, metadataHash: METADATA_HASH }),
+    ];
+    expect(decodeAssetCreatedLogs(logs, REGISTRY, ASSET_ID)).toHaveLength(0);
+  });
+});
+
+describe("fetchRegistryAsset", () => {
+  const REGISTRY: `0x${string}` = "0x5FbDB2315678afecb367f032d93F642f64180aa3";
+  const OWNER: `0x${string}` = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
+  const METADATA_HASH: `0x${string}` = `0x${"77".repeat(32)}`;
+  const AGREEMENT_HASH: `0x${string}` = `0x${"88".repeat(32)}`;
+  const TOKEN: `0x${string}` = `0x${"99".repeat(20)}`;
+
+  it("parses struct object returned by registry", async () => {
+    const result = await fetchRegistryAsset(
+      async () => ({
+        owner: OWNER,
+        metadataHash: METADATA_HASH,
+        agreementHash: AGREEMENT_HASH,
+        status: 0,
+        token: TOKEN,
+      }),
+      REGISTRY,
+      ASSET_ID,
+    );
+    expect(result).toEqual({
+      ok: true,
+      asset: {
+        owner: OWNER,
+        metadataHash: METADATA_HASH,
+        agreementHash: AGREEMENT_HASH,
+        status: 0,
+        token: TOKEN,
+      },
+    });
+  });
+
+  it("parses tuple array returned by registry", async () => {
+    const result = await fetchRegistryAsset(
+      async () => [OWNER, METADATA_HASH, AGREEMENT_HASH, 0, TOKEN] as const,
+      REGISTRY,
+      ASSET_ID,
+    );
+    expect(result).toEqual({
+      ok: true,
+      asset: {
+        owner: OWNER,
+        metadataHash: METADATA_HASH,
+        agreementHash: AGREEMENT_HASH,
+        status: 0,
+        token: TOKEN,
+      },
+    });
+  });
+
+  it("handles RPC error safely", async () => {
+    const result = await fetchRegistryAsset(
+      async () => {
+        throw new Error("RPC timeout");
+      },
+      REGISTRY,
+      ASSET_ID,
+    );
+    expect(result).toEqual({ ok: false, reason: "rpc_error" });
   });
 });
