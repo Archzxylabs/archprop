@@ -15,8 +15,10 @@
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import * as supabaseModule from "./supabase";
-import { GET as listProperties } from "../../app/api/properties/route";
+import { GET as listProperties, POST as createProperty } from "../../app/api/properties/route";
 import { GET as getPropertyDetail } from "../../app/api/properties/[id]/route";
+import { POST as uploadDocument } from "../../app/api/properties/[id]/documents/route";
+import { hashBuffer } from "./documents";
 
 const samplePropertyRow = {
   id: "11111111-2222-3333-4444-555555555555",
@@ -320,5 +322,460 @@ describe("GET /api/properties/:id route-level tests", () => {
     expect(json.chainCache).toHaveLength(1);
     // Documents safely degrades to [] and is never exposed
     expect(json.documents).toEqual([]);
+  });
+});
+
+describe("POST /api/properties route-level tests", () => {
+  it("creates property with DRAFT status and omits status_cache from client insert payload", async () => {
+    let capturedInsertPayload: Record<string, unknown> | null = null;
+
+    vi.spyOn(supabaseModule, "createUserClient").mockImplementation((_config, token) => {
+      if (!token) {
+        // anonClient used by requireAuth
+        return {
+          auth: {
+            getUser: vi.fn().mockImplementation(async (jwt: string) => {
+              if (jwt === "valid-owner-jwt") {
+                return {
+                  data: {
+                    user: {
+                      id: "11111111-1111-1111-1111-111111111111",
+                      email: "owner@example.com",
+                    },
+                  },
+                  error: null,
+                };
+              }
+              return { data: { user: null }, error: { message: "Invalid session" } };
+            }),
+          },
+        } as unknown as supabaseModule.UserSupabaseClient;
+      }
+
+      // userClient used to insert property
+      return {
+        from: vi.fn().mockImplementation((table: string) => {
+          if (table === "properties") {
+            return {
+              insert: vi.fn().mockImplementation((payload: Record<string, unknown>) => {
+                capturedInsertPayload = payload;
+                return {
+                  select: vi.fn().mockReturnValue({
+                    single: vi.fn().mockResolvedValue({
+                      data: {
+                        ...samplePropertyRow,
+                        external_id: payload.external_id,
+                        name: payload.name,
+                        slug: payload.slug,
+                        status_cache: "DRAFT",
+                      },
+                      error: null,
+                    }),
+                  }),
+                };
+              }),
+            };
+          }
+          return {};
+        }),
+      } as unknown as supabaseModule.UserSupabaseClient;
+    });
+
+    const createBody = {
+      externalId: "ARCHPROP-TEST-CREATE",
+      name: "Villa Test Create",
+      propertyType: "RESIDENTIAL",
+      location: "Bali, Indonesia",
+      issuerName: "PT Bali Test",
+      description: "A luxury test villa.",
+      indicativeValue: "10000000000",
+      offeringTarget: "3000000000",
+      tokenSupply: "300000",
+      tokenPrice: "10000",
+      economicRightsBps: 3000,
+    };
+
+    const request = new NextRequest("http://localhost/api/properties", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer valid-owner-jwt",
+      },
+      body: JSON.stringify(createBody),
+    });
+
+    const response = await createProperty(request);
+    expect(response.status).toBe(201);
+    const json = await response.json();
+
+    // Verify response DTO contains statusCache: "DRAFT"
+    expect(json.property.statusCache).toBe("DRAFT");
+    expect(json.property.externalId).toBe("ARCHPROP-TEST-CREATE");
+
+    // CRITICAL: Ensure client-supplied insert payload strictly omits status_cache
+    // so PostgreSQL column-level INSERT privileges and DB defaults are respected.
+    const payload = capturedInsertPayload as Record<string, unknown> | null;
+    expect(payload).not.toBeNull();
+    expect(payload).not.toHaveProperty("status_cache");
+    expect(payload?.owner_user_id).toBe("11111111-1111-1111-1111-111111111111");
+  });
+
+  it("rejects unauthenticated creation request with 401", async () => {
+    const request = new NextRequest("http://localhost/api/properties", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ name: "Unauth Property" }),
+    });
+
+    const response = await createProperty(request);
+    expect(response.status).toBe(401);
+    const json = await response.json();
+    expect(json.error.code).toBe("unauthorized");
+  });
+});
+
+describe("POST /api/properties/:id/documents route-level tests", () => {
+  const propertyId = "11111111-2222-3333-4444-555555555555";
+  const validOwnerId = "11111111-1111-1111-1111-111111111111";
+  const nonOwnerId = "99999999-9999-9999-9999-999999999999";
+  const validPdfBytes = Buffer.from(
+    "%PDF-1.4\n1 0 obj\n<< /Title (Test Deed) >>\nendobj\ntrailer\n<<>>\n%%EOF",
+  );
+
+  function makeDocRequest(options: {
+    token?: string | undefined;
+    fileBytes?: Buffer | undefined;
+    fileName?: string | undefined;
+    contentType?: string | undefined;
+    documentType?: string | undefined;
+  }): NextRequest {
+    const form = new FormData();
+    const bytes = options.fileBytes ?? validPdfBytes;
+    const name = options.fileName ?? "deed.pdf";
+    const type = options.contentType ?? "application/pdf";
+    form.append("file", new File([new Uint8Array(bytes)], name, { type }));
+    if (options.documentType !== undefined) {
+      form.append("documentType", options.documentType);
+    } else {
+      form.append("documentType", "LAND_RIGHT");
+    }
+
+    return new NextRequest(`http://localhost/api/properties/${propertyId}/documents`, {
+      method: "POST",
+      headers: {
+        ...(options.token ? { authorization: `Bearer ${options.token}` } : {}),
+      },
+      body: form,
+    });
+  }
+
+  it("rejects unauthenticated request with 401 without performing any service client write", async () => {
+    const serviceSpy = vi.spyOn(supabaseModule, "createServiceClient");
+
+    const request = makeDocRequest({ token: undefined });
+    const response = await uploadDocument(request, {
+      params: Promise.resolve({ id: propertyId }),
+    });
+
+    expect(response.status).toBe(401);
+    const json = await response.json();
+    expect(json.error.code).toBe("unauthorized");
+    expect(serviceSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects non-owner caller with 403 before any storage write", async () => {
+    vi.spyOn(supabaseModule, "createUserClient").mockReturnValue({
+      auth: {
+        getUser: vi.fn().mockResolvedValue({
+          data: { user: { id: nonOwnerId, email: "nonowner@example.com" } },
+          error: null,
+        }),
+      },
+    } as unknown as supabaseModule.UserSupabaseClient);
+
+    const storageUploadSpy = vi.fn();
+    vi.spyOn(supabaseModule, "createServiceClient").mockReturnValue({
+      from: vi.fn().mockImplementation((table: string) => {
+        if (table === "properties") {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                limit: vi.fn().mockReturnValue({
+                  maybeSingle: vi.fn().mockResolvedValue({
+                    data: { id: propertyId, owner_user_id: validOwnerId },
+                    error: null,
+                  }),
+                }),
+              }),
+            }),
+          };
+        }
+        return {};
+      }),
+      storage: {
+        from: vi.fn().mockReturnValue({
+          upload: storageUploadSpy,
+        }),
+      },
+    } as unknown as supabaseModule.UserSupabaseClient);
+
+    const request = makeDocRequest({ token: "valid-non-owner-jwt" });
+    const response = await uploadDocument(request, {
+      params: Promise.resolve({ id: propertyId }),
+    });
+
+    expect(response.status).toBe(403);
+    const json = await response.json();
+    expect(json.error.code).toBe("forbidden");
+    expect(json.error.message).toBe("You do not own this property.");
+    expect(storageUploadSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects non-PDF content with 415 before storage upload or document insert", async () => {
+    vi.spyOn(supabaseModule, "createUserClient").mockReturnValue({
+      auth: {
+        getUser: vi.fn().mockResolvedValue({
+          data: { user: { id: validOwnerId, email: "owner@example.com" } },
+          error: null,
+        }),
+      },
+    } as unknown as supabaseModule.UserSupabaseClient);
+
+    const storageUploadSpy = vi.fn();
+    const documentInsertSpy = vi.fn();
+    vi.spyOn(supabaseModule, "createServiceClient").mockReturnValue({
+      from: vi.fn().mockImplementation((table: string) => {
+        if (table === "properties") {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                limit: vi.fn().mockReturnValue({
+                  maybeSingle: vi.fn().mockResolvedValue({
+                    data: { id: propertyId, owner_user_id: validOwnerId },
+                    error: null,
+                  }),
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === "property_documents") {
+          return {
+            insert: documentInsertSpy,
+          };
+        }
+        return {};
+      }),
+      storage: {
+        from: vi.fn().mockReturnValue({
+          upload: storageUploadSpy,
+        }),
+      },
+    } as unknown as supabaseModule.UserSupabaseClient);
+
+    // Provide non-PDF bytes (even with a .pdf extension)
+    const request = makeDocRequest({
+      token: "valid-owner-jwt",
+      fileBytes: Buffer.from("PLAIN TEXT NOT A PDF DOCUMENT"),
+      fileName: "fake.pdf",
+    });
+
+    const response = await uploadDocument(request, {
+      params: Promise.resolve({ id: propertyId }),
+    });
+
+    expect(response.status).toBe(415);
+    const json = await response.json();
+    expect(json.error.code).toBe("unsupported_media_type");
+    expect(json.error.message).toBe("Only PDF documents are accepted.");
+    expect(storageUploadSpy).not.toHaveBeenCalled();
+    expect(documentInsertSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects duplicate document type with 409 conflict before storage upload", async () => {
+    vi.spyOn(supabaseModule, "createUserClient").mockReturnValue({
+      auth: {
+        getUser: vi.fn().mockResolvedValue({
+          data: { user: { id: validOwnerId, email: "owner@example.com" } },
+          error: null,
+        }),
+      },
+    } as unknown as supabaseModule.UserSupabaseClient);
+
+    const storageUploadSpy = vi.fn();
+    vi.spyOn(supabaseModule, "createServiceClient").mockReturnValue({
+      from: vi.fn().mockImplementation((table: string) => {
+        if (table === "properties") {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                limit: vi.fn().mockReturnValue({
+                  maybeSingle: vi.fn().mockResolvedValue({
+                    data: { id: propertyId, owner_user_id: validOwnerId },
+                    error: null,
+                  }),
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === "property_documents") {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                eq: vi.fn().mockReturnValue({
+                  limit: vi.fn().mockReturnValue({
+                    maybeSingle: vi.fn().mockResolvedValue({
+                      data: { id: "existing-doc-id" },
+                      error: null,
+                    }),
+                  }),
+                }),
+              }),
+            }),
+          };
+        }
+        return {};
+      }),
+      storage: {
+        from: vi.fn().mockReturnValue({
+          upload: storageUploadSpy,
+        }),
+      },
+    } as unknown as supabaseModule.UserSupabaseClient);
+
+    const request = makeDocRequest({
+      token: "valid-owner-jwt",
+      documentType: "LAND_RIGHT",
+    });
+
+    const response = await uploadDocument(request, {
+      params: Promise.resolve({ id: propertyId }),
+    });
+
+    expect(response.status).toBe(409);
+    const json = await response.json();
+    expect(json.error.code).toBe("conflict");
+    expect(json.error.message).toBe("A document of this type already exists.");
+    expect(storageUploadSpy).not.toHaveBeenCalled();
+  });
+
+  it("uploads valid PDF via service client, verifies stored SHA-256, inserts document row, and returns 201", async () => {
+    vi.spyOn(supabaseModule, "createUserClient").mockReturnValue({
+      auth: {
+        getUser: vi.fn().mockResolvedValue({
+          data: { user: { id: validOwnerId, email: "owner@example.com" } },
+          error: null,
+        }),
+      },
+    } as unknown as supabaseModule.UserSupabaseClient);
+
+    let capturedStorageUploadPath: string | null = null;
+    let capturedDocInsertPayload: Record<string, unknown> | null = null;
+
+    vi.spyOn(supabaseModule, "createServiceClient").mockReturnValue({
+      from: vi.fn().mockImplementation((table: string) => {
+        if (table === "properties") {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                limit: vi.fn().mockReturnValue({
+                  maybeSingle: vi.fn().mockResolvedValue({
+                    data: { id: propertyId, owner_user_id: validOwnerId },
+                    error: null,
+                  }),
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === "property_documents") {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                eq: vi.fn().mockReturnValue({
+                  limit: vi.fn().mockReturnValue({
+                    maybeSingle: vi.fn().mockResolvedValue({
+                      data: null,
+                      error: null,
+                    }),
+                  }),
+                }),
+              }),
+            }),
+            insert: vi.fn().mockImplementation((payload: Record<string, unknown>) => {
+              capturedDocInsertPayload = payload;
+              return {
+                select: vi.fn().mockReturnValue({
+                  single: vi.fn().mockResolvedValue({
+                    data: {
+                      id: "new-doc-id-123",
+                      property_id: propertyId,
+                      document_type: payload.document_type,
+                      document_hash: payload.document_hash,
+                      storage_path: payload.storage_path,
+                      is_demo: payload.is_demo,
+                      created_at: "2026-08-22T00:00:00Z",
+                    },
+                    error: null,
+                  }),
+                }),
+              };
+            }),
+          };
+        }
+        return {};
+      }),
+      storage: {
+        from: vi.fn().mockReturnValue({
+          upload: vi.fn().mockImplementation((path: string) => {
+            capturedStorageUploadPath = path;
+            return Promise.resolve({ data: { path }, error: null });
+          }),
+          download: vi.fn().mockResolvedValue({
+            data: new Blob([new Uint8Array(validPdfBytes)]),
+            error: null,
+          }),
+          remove: vi.fn().mockResolvedValue({ data: [], error: null }),
+        }),
+      },
+    } as unknown as supabaseModule.UserSupabaseClient);
+
+    const request = makeDocRequest({
+      token: "valid-owner-jwt",
+      documentType: "LAND_RIGHT",
+      fileName: "authentic_land_deed.pdf",
+    });
+
+    const response = await uploadDocument(request, {
+      params: Promise.resolve({ id: propertyId }),
+    });
+
+    expect(response.status).toBe(201);
+    const json = await response.json();
+
+    const expectedHash = hashBuffer(validPdfBytes).sha256;
+
+    // Verify response DTO
+    expect(json.document.id).toBe("new-doc-id-123");
+    expect(json.document.documentType).toBe("LAND_RIGHT");
+    expect(json.document.sha256).toBe(expectedHash);
+    expect(json.document.isDemo).toBe(true);
+
+    // Verify storage write occurred under property UUID prefix
+    const uploadPath = capturedStorageUploadPath as string | null;
+    expect(uploadPath).not.toBeNull();
+    expect(uploadPath?.startsWith(`${propertyId}/land_right-`)).toBe(true);
+
+    // Verify service client insert payload
+    const docPayload = capturedDocInsertPayload as Record<string, unknown> | null;
+    expect(docPayload).not.toBeNull();
+    expect(docPayload?.property_id).toBe(propertyId);
+    expect(docPayload?.document_type).toBe("LAND_RIGHT");
+    expect(docPayload?.document_hash).toBe(expectedHash);
+    expect(docPayload?.uploaded_by).toBe(validOwnerId);
+    expect(docPayload?.is_demo).toBe(true);
   });
 });

@@ -127,7 +127,6 @@ export async function POST(request: NextRequest) {
         token_supply: input.tokenSupply,
         token_price: input.tokenPrice,
         economic_rights_bps: input.economicRightsBps,
-        status_cache: "DRAFT",
       })
       .select(PUBLIC_PROPERTY_COLUMNS)
       .single();

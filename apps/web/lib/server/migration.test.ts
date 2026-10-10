@@ -111,22 +111,24 @@ describe("Migration DDL privilege regression tests (Static Schema Analysis)", ()
         "token_supply",
         "token_price",
         "economic_rights_bps",
-        "status_cache",
       ];
 
       for (const col of requiredInsertColumns) {
         expect(insertColumns).toContain(col);
       }
 
-      // Restriced columns must NOT be insertable by authenticated users
+      // Restricted columns must NOT be insertable by authenticated users.
+      // status_cache is strictly withheld from client INSERT to prevent forging
+      // lifecycle state; the DB default sets 'DRAFT'.
+      expect(insertColumns).not.toContain("status_cache");
       expect(insertColumns).not.toContain("chain_asset_id");
       expect(insertColumns).not.toContain("token_address");
       expect(insertColumns).not.toContain("address_private");
     });
 
-    it("enforces RLS on property creation: owner_user_id = auth.uid()", () => {
+    it("enforces RLS on property creation: owner_user_id = auth.uid() and status_cache = 'DRAFT'", () => {
       expect(sql).toMatch(
-        /create\s+policy\s+properties_insert_own\s+on\s+public\.properties\s+for\s+insert\s+to\s+authenticated\s+with\s+check\s*\(\s*owner_user_id\s*=\s*auth\.uid\(\)\s*\)/i,
+        /create\s+policy\s+properties_insert_own\s+on\s+public\.properties\s+for\s+insert\s+to\s+authenticated\s+with\s+check\s*\(\s*owner_user_id\s*=\s*auth\.uid\(\)\s+and\s+status_cache\s*=\s*'DRAFT'\s*\)/i,
       );
     });
 
@@ -306,6 +308,66 @@ describe("Migration DDL privilege regression tests (Static Schema Analysis)", ()
       );
       // Must contain idempotent guard ensuring the constraint is added if rerun
       expect(sql).toMatch(/conname\s*=\s*'revenue_epochs_one_per_chain_epoch'/i);
+    });
+  });
+
+  describe("property_documents table and storage bucket privileges and policies", () => {
+    it("grants only SELECT on public.property_documents to authenticated and withholds INSERT, UPDATE, DELETE", () => {
+      expect(sql).toMatch(/grant\s+select\s+on\s+public\.property_documents\s+to\s+authenticated;/i);
+      expect(sql).not.toMatch(
+        /grant\s+[^;]*\b(insert|update|delete|all)\b[^;]*\bon\s+public\.property_documents\s+to\s+authenticated\b/i,
+      );
+    });
+
+    it("withholds all table privileges on public.property_documents from anon", () => {
+      expect(sql).toMatch(/revoke\s+all\s+on\s+public\.property_documents\s+from\s+anon;/i);
+      expect(sql).not.toMatch(
+        /grant\s+[^;]*\bon\s+public\.property_documents\s+to\s+anon\b/i,
+      );
+    });
+
+    it("idempotently drops client write policies on public.property_documents and retains owner SELECT policy", () => {
+      expect(sql).toMatch(
+        /drop\s+policy\s+if\s+exists\s+property_documents_insert_owner\s+on\s+public\.property_documents;/i,
+      );
+      expect(sql).toMatch(
+        /drop\s+policy\s+if\s+exists\s+property_documents_update_owner\s+on\s+public\.property_documents;/i,
+      );
+      expect(sql).toMatch(
+        /drop\s+policy\s+if\s+exists\s+property_documents_delete_owner\s+on\s+public\.property_documents;/i,
+      );
+
+      // Must NOT create client write policies
+      expect(sql).not.toMatch(/create\s+policy\s+property_documents_insert/i);
+      expect(sql).not.toMatch(/create\s+policy\s+property_documents_update/i);
+      expect(sql).not.toMatch(/create\s+policy\s+property_documents_delete/i);
+
+      // Must create owner SELECT policy using public.owns_property
+      expect(sql).toMatch(
+        /create\s+policy\s+property_documents_select_owner\s+on\s+public\.property_documents\s+for\s+select\s+to\s+authenticated\s+using\s*\(\s*public\.owns_property\(property_id\)\s*\);/i,
+      );
+    });
+
+    it("idempotently drops client write policies on property-documents storage bucket and retains owner SELECT policy", () => {
+      expect(sql).toMatch(
+        /drop\s+policy\s+if\s+exists\s+property_documents_storage_insert\s+on\s+storage\.objects;/i,
+      );
+      expect(sql).toMatch(
+        /drop\s+policy\s+if\s+exists\s+property_documents_storage_update\s+on\s+storage\.objects;/i,
+      );
+      expect(sql).toMatch(
+        /drop\s+policy\s+if\s+exists\s+property_documents_storage_delete\s+on\s+storage\.objects;/i,
+      );
+
+      // Must NOT create client storage write policies for property-documents
+      expect(sql).not.toMatch(/create\s+policy\s+property_documents_storage_insert/i);
+      expect(sql).not.toMatch(/create\s+policy\s+property_documents_storage_update/i);
+      expect(sql).not.toMatch(/create\s+policy\s+property_documents_storage_delete/i);
+
+      // Must retain owner SELECT policy on property-documents
+      expect(sql).toMatch(
+        /create\s+policy\s+property_documents_storage_select\s+on\s+storage\.objects\s+for\s+select\s+to\s+authenticated/i,
+      );
     });
   });
 

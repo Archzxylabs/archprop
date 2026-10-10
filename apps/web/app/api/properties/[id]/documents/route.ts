@@ -2,23 +2,27 @@
  * POST /api/properties/:id/documents
  *
  * Accepts `multipart/form-data` with `file` and `documentType`. The handler:
+ *   - authenticates the caller,
+ *   - explicitly verifies property ownership via the server service client
+ *     before any storage write,
  *   - hashes the exact received bytes itself and never reads a client hash,
  *   - refuses anything that is not a PDF over 10 MiB,
- *   - checks the bytes are a PDF, not just a `.pdf` name or content type,
+ *   - checks the bytes are a PDF by magic bytes, not just a `.pdf` name,
  *   - generates the storage path server-side so writes stay inside the
- *     caller's own property prefix,
- *   - uploads through the caller's JWT so the storage RLS policy is what
- *     authorizes the write,
+ *     property prefix,
+ *   - uploads through the server service client,
  *   - re-hashes the stored object before inserting the row, so the database
- *     hash always describes the bytes actually at rest.
+ *     hash always describes the bytes actually at rest,
+ *   - inserts the document row via the service client,
+ *   - cleans up any orphaned storage object if validation or insert fails.
  *
  * It performs no wallet write and mints nothing. The on-chain evidence hash is
  * submitted separately by the owner's wallet.
  */
 
 import type { NextRequest } from "next/server";
-import { loadConfig, describe } from "@/lib/server/config";
-import { createUserClient } from "@/lib/server/supabase";
+import { loadConfig, describe } from "../../../../../lib/server/config";
+import { createServiceClient, createUserClient } from "../../../../../lib/server/supabase";
 import {
   jsonError,
   notFound,
@@ -30,8 +34,8 @@ import {
   requireAuth,
   isUniqueViolation,
   serviceUnavailable,
-} from "@/lib/server/http";
-import { uploadDocumentSchema } from "@/lib/server/schemas";
+} from "../../../../../lib/server/http";
+import { uploadDocumentSchema } from "../../../../../lib/server/schemas";
 import {
   MAX_DOCUMENT_BYTES,
   buildStoragePath,
@@ -39,8 +43,8 @@ import {
   isPdfContent,
   readToBuffer,
   validateUpload,
-} from "@/lib/server/documents";
-import { toDocumentDto, type PropertyDocumentRow } from "@/lib/server/properties";
+} from "../../../../../lib/server/documents";
+import { toDocumentDto, type PropertyDocumentRow } from "../../../../../lib/server/properties";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -69,6 +73,27 @@ export async function POST(
   const auth = await requireAuth(anonClient, request);
   if (!auth.ok) {
     return auth.response;
+  }
+
+  // Explicitly check property ownership using the server service client
+  // BEFORE any storage write or file processing. The restricted client
+  // cannot read owner_user_id due to least-privilege column grants.
+  const serviceClient = createServiceClient(configResult.config.supabase);
+  const { data: property, error: propertyError } = await serviceClient
+    .from("properties")
+    .select("id, owner_user_id")
+    .eq("id", id)
+    .limit(1)
+    .maybeSingle();
+
+  if (propertyError) {
+    return jsonError(500, "query_failed", "The property could not be resolved.");
+  }
+  if (!property) {
+    return notFound("Property not found.");
+  }
+  if (property.owner_user_id !== auth.auth.userId) {
+    return forbidden("You do not own this property.");
   }
 
   const contentType = request.headers.get("content-type") ?? "";
@@ -116,22 +141,33 @@ export async function POST(
     return unsupportedMediaType("Only PDF documents are accepted.");
   }
 
-  // The filename and content type are both client-controlled, so neither proves
-  // the bytes are a PDF. The bucket policy only checks the extension, so this
-  // is the only place that would notice a PDF-named non-PDF before it is stored
-  // and later served back as evidence.
+  // Check magic bytes: the filename and content type are both client-controlled,
+  // so neither proves the bytes are a real PDF.
   if (!isPdfContent(read.buffer)) {
     return unsupportedMediaType("Only PDF documents are accepted.");
   }
 
-  // The storage path is generated here, never taken from the client.
+  // Pre-check for duplicate document type before storage upload
+  const { data: existingDoc, error: existingDocError } = await serviceClient
+    .from("property_documents")
+    .select("id")
+    .eq("property_id", id)
+    .eq("document_type", documentType)
+    .limit(1)
+    .maybeSingle();
+
+  if (existingDocError) {
+    return jsonError(500, "query_failed", "Existing documents could not be checked.");
+  }
+  if (existingDoc) {
+    return jsonError(409, "conflict", "A document of this type already exists.");
+  }
+
+  // The storage path is generated server-side, never taken from the client.
   const storagePath = buildStoragePath(id, documentType, fileValue.name || "document.pdf");
 
-  const userClient = createUserClient(configResult.config.supabase, auth.auth.accessToken);
-
-  // Upload through the caller's JWT: the property_documents_storage_insert
-  // policy requires the first path segment to be a property the caller owns.
-  const { error: uploadError } = await userClient.storage
+  // Only after ownership check and PDF validation may the server service client upload
+  const { error: uploadError } = await serviceClient.storage
     .from(DOCUMENT_BUCKET)
     .upload(storagePath, read.buffer, {
       contentType: "application/pdf",
@@ -140,20 +176,16 @@ export async function POST(
     });
 
   if (uploadError) {
-    const message = (uploadError as { message?: string }).message ?? "";
-    if (/row level security|not authorized|permission|denied/i.test(message)) {
-      return forbidden("You do not own this property.");
-    }
     return jsonError(502, "storage_failed", "The document could not be stored.");
   }
 
   // Re-read and re-hash what is actually at rest before recording a row, so
   // the recorded hash cannot describe bytes the store rejected.
-  const { data: stored, error: downloadError } = await userClient.storage
+  const { data: stored, error: downloadError } = await serviceClient.storage
     .from(DOCUMENT_BUCKET)
     .download(storagePath);
   if (downloadError || !stored) {
-    await removeQuietly(userClient, storagePath);
+    await removeQuietly(serviceClient, storagePath);
     return jsonError(502, "storage_failed", "The stored document could not be verified.");
   }
 
@@ -161,11 +193,11 @@ export async function POST(
   const storedHash = hashBuffer(storedBuffer).sha256;
   const receivedHash = hashBuffer(read.buffer).sha256;
   if (storedHash !== receivedHash) {
-    await removeQuietly(userClient, storagePath);
+    await removeQuietly(serviceClient, storagePath);
     return jsonError(500, "integrity_failed", "The stored document did not match the upload.");
   }
 
-  const { data: row, error: insertError } = await userClient
+  const { data: row, error: insertError } = await serviceClient
     .from("property_documents")
     .insert({
       property_id: id,
@@ -179,14 +211,9 @@ export async function POST(
     .single();
 
   if (insertError) {
-    await removeQuietly(userClient, storagePath);
+    await removeQuietly(serviceClient, storagePath);
     if (isUniqueViolation(insertError)) {
-      // One document per type per property, matching the unique constraint.
       return jsonError(409, "conflict", "A document of this type already exists.");
-    }
-    const code = (insertError as { code?: string }).code;
-    if (code === "42501" || code === "42503") {
-      return forbidden("You do not own this property.");
     }
     return jsonError(500, "insert_failed", "The document record could not be created.");
   }
@@ -199,7 +226,7 @@ export async function POST(
 
 /** Best-effort cleanup of an orphaned object; failures are non-fatal. */
 async function removeQuietly(
-  client: ReturnType<typeof createUserClient>,
+  client: ReturnType<typeof createServiceClient>,
   storagePath: string,
 ): Promise<void> {
   try {
