@@ -37,8 +37,8 @@ To bootstrap the local dependencies from scratch within `packages/contracts`:
 cd packages/contracts
 
 # Method 1: Using forge install
-forge install OpenZeppelin/openzeppelin-contracts@v5.5.0 --no-git --no-commit
-forge install foundry-rs/forge-std@v1.11.0 --no-git --no-commit
+forge install OpenZeppelin/openzeppelin-contracts@v5.5.0 --no-git
+forge install foundry-rs/forge-std@v1.11.0 --no-git
 
 # Method 2: Using git clone into lib/
 mkdir -p lib

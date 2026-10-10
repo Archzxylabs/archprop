@@ -611,4 +611,3 @@ contract OfferingEscrowTest is BaseTest {
         return escrow.getOffering(id);
     }
 }
-
