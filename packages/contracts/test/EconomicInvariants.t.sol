@@ -4,7 +4,6 @@ pragma solidity 0.8.30;
 import {
     AssetStatus,
     AttestationType,
-    OfferingStatus,
     OfferingView,
     RevenueEpochView
 } from "../src/ArchpropInterfaces.sol";
