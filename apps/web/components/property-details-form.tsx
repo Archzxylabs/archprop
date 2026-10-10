@@ -103,7 +103,7 @@ export function PropertyDetailsForm({ initialValues }: PropertyDetailsFormProps 
 
   return (
     <form
-      className="mt-4 flex flex-col gap-6"
+      className="mt-4 flex flex-col gap-6 min-w-0"
       aria-label="Property details"
       onSubmit={(event) => event.preventDefault()}
     >
@@ -118,7 +118,7 @@ export function PropertyDetailsForm({ initialValues }: PropertyDetailsFormProps 
         <button
           type="button"
           onClick={handleResetToPreset}
-          className="rounded border border-line-strong bg-surface px-3 py-1.5 font-medium text-ink transition-colors hover:bg-surface-sunken hover:text-brand"
+          className="rounded border border-line-strong bg-surface px-3 py-1.5 font-medium text-ink transition-colors hover:bg-surface-sunken hover:text-brand focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
         >
           Reset to Villa Nusa preset
         </button>
@@ -126,7 +126,7 @@ export function PropertyDetailsForm({ initialValues }: PropertyDetailsFormProps 
 
       {/* Asset Identity */}
       <div className="grid gap-4 sm:grid-cols-2">
-        <div className="flex flex-col gap-1.5">
+        <div className="flex flex-col gap-1.5 min-w-0">
           <label htmlFor="externalId" className="text-sm font-medium text-ink-muted">
             Asset ID / External ID
           </label>
@@ -139,7 +139,7 @@ export function PropertyDetailsForm({ initialValues }: PropertyDetailsFormProps 
             placeholder="e.g. ARCHPROP-001"
             aria-invalid={!!validation.errors.externalId}
             aria-describedby={validation.errors.externalId ? "externalId-error" : undefined}
-            className="rounded-lg border border-line-strong bg-surface px-3 py-2.5 text-sm text-ink placeholder:text-ink-subtle"
+            className="w-full rounded-lg border border-line-strong bg-surface px-3 py-2.5 text-sm text-ink placeholder:text-ink-subtle focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 focus-visible:border-brand"
           />
           {validation.errors.externalId ? (
             <p id="externalId-error" role="alert" className="text-xs text-critical">
@@ -148,7 +148,7 @@ export function PropertyDetailsForm({ initialValues }: PropertyDetailsFormProps 
           ) : null}
         </div>
 
-        <div className="flex flex-col gap-1.5">
+        <div className="flex flex-col gap-1.5 min-w-0">
           <label htmlFor="name" className="text-sm font-medium text-ink-muted">
             Property name
           </label>
@@ -161,7 +161,7 @@ export function PropertyDetailsForm({ initialValues }: PropertyDetailsFormProps 
             placeholder="e.g. Villa Nusa"
             aria-invalid={!!validation.errors.name}
             aria-describedby={validation.errors.name ? "name-error" : undefined}
-            className="rounded-lg border border-line-strong bg-surface px-3 py-2.5 text-sm text-ink placeholder:text-ink-subtle"
+            className="w-full rounded-lg border border-line-strong bg-surface px-3 py-2.5 text-sm text-ink placeholder:text-ink-subtle focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 focus-visible:border-brand"
           />
           {validation.errors.name ? (
             <p id="name-error" role="alert" className="text-xs text-critical">
@@ -170,7 +170,7 @@ export function PropertyDetailsForm({ initialValues }: PropertyDetailsFormProps 
           ) : null}
         </div>
 
-        <div className="flex flex-col gap-1.5">
+        <div className="flex flex-col gap-1.5 min-w-0">
           <label htmlFor="location" className="text-sm font-medium text-ink-muted">
             Location
           </label>
@@ -183,7 +183,7 @@ export function PropertyDetailsForm({ initialValues }: PropertyDetailsFormProps 
             placeholder="e.g. Bali"
             aria-invalid={!!validation.errors.location}
             aria-describedby={validation.errors.location ? "location-error" : undefined}
-            className="rounded-lg border border-line-strong bg-surface px-3 py-2.5 text-sm text-ink placeholder:text-ink-subtle"
+            className="w-full rounded-lg border border-line-strong bg-surface px-3 py-2.5 text-sm text-ink placeholder:text-ink-subtle focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 focus-visible:border-brand"
           />
           {validation.errors.location ? (
             <p id="location-error" role="alert" className="text-xs text-critical">
@@ -192,7 +192,7 @@ export function PropertyDetailsForm({ initialValues }: PropertyDetailsFormProps 
           ) : null}
         </div>
 
-        <div className="flex flex-col gap-1.5">
+        <div className="flex flex-col gap-1.5 min-w-0">
           <label htmlFor="propertyType" className="text-sm font-medium text-ink-muted">
             Property type
           </label>
@@ -205,7 +205,7 @@ export function PropertyDetailsForm({ initialValues }: PropertyDetailsFormProps 
             placeholder="e.g. Villa"
             aria-invalid={!!validation.errors.propertyType}
             aria-describedby={validation.errors.propertyType ? "propertyType-error" : undefined}
-            className="rounded-lg border border-line-strong bg-surface px-3 py-2.5 text-sm text-ink placeholder:text-ink-subtle"
+            className="w-full rounded-lg border border-line-strong bg-surface px-3 py-2.5 text-sm text-ink placeholder:text-ink-subtle focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 focus-visible:border-brand"
           />
           {validation.errors.propertyType ? (
             <p id="propertyType-error" role="alert" className="text-xs text-critical">
@@ -214,7 +214,7 @@ export function PropertyDetailsForm({ initialValues }: PropertyDetailsFormProps 
           ) : null}
         </div>
 
-        <div className="flex flex-col gap-1.5 sm:col-span-2">
+        <div className="flex flex-col gap-1.5 sm:col-span-2 min-w-0">
           <label htmlFor="issuerName" className="text-sm font-medium text-ink-muted">
             Issuer name
           </label>
@@ -227,7 +227,7 @@ export function PropertyDetailsForm({ initialValues }: PropertyDetailsFormProps 
             placeholder="e.g. PT Nusa Properties"
             aria-invalid={!!validation.errors.issuerName}
             aria-describedby={validation.errors.issuerName ? "issuerName-error" : undefined}
-            className="rounded-lg border border-line-strong bg-surface px-3 py-2.5 text-sm text-ink placeholder:text-ink-subtle"
+            className="w-full rounded-lg border border-line-strong bg-surface px-3 py-2.5 text-sm text-ink placeholder:text-ink-subtle focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 focus-visible:border-brand"
           />
           {validation.errors.issuerName ? (
             <p id="issuerName-error" role="alert" className="text-xs text-critical">
@@ -238,7 +238,7 @@ export function PropertyDetailsForm({ initialValues }: PropertyDetailsFormProps 
       </div>
 
       {/* Description */}
-      <div className="flex flex-col gap-1.5">
+      <div className="flex flex-col gap-1.5 min-w-0">
         <label htmlFor="description" className="text-sm font-medium text-ink-muted">
           Description
         </label>
@@ -251,7 +251,7 @@ export function PropertyDetailsForm({ initialValues }: PropertyDetailsFormProps 
           placeholder="What the property is and what the offering represents"
           aria-invalid={!!validation.errors.description}
           aria-describedby={validation.errors.description ? "description-error" : undefined}
-          className="rounded-lg border border-line-strong bg-surface px-3 py-2.5 text-sm text-ink placeholder:text-ink-subtle"
+          className="w-full rounded-lg border border-line-strong bg-surface px-3 py-2.5 text-sm text-ink placeholder:text-ink-subtle focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 focus-visible:border-brand"
         />
         {validation.errors.description ? (
           <p id="description-error" role="alert" className="text-xs text-critical">
@@ -267,7 +267,7 @@ export function PropertyDetailsForm({ initialValues }: PropertyDetailsFormProps 
         </h3>
 
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          <div className="flex flex-col gap-1.5">
+          <div className="flex flex-col gap-1.5 min-w-0">
             <label htmlFor="indicativeValue" className="text-sm font-medium text-ink-muted">
               Indicative value (mIDR)
             </label>
@@ -281,7 +281,7 @@ export function PropertyDetailsForm({ initialValues }: PropertyDetailsFormProps 
               placeholder="10000000000"
               aria-invalid={!!validation.errors.indicativeValue}
               aria-describedby={validation.errors.indicativeValue ? "indicativeValue-error" : undefined}
-              className="ap-tabular rounded-lg border border-line-strong bg-surface px-3 py-2.5 text-sm text-ink placeholder:text-ink-subtle"
+              className="ap-tabular w-full rounded-lg border border-line-strong bg-surface px-3 py-2.5 text-sm text-ink placeholder:text-ink-subtle focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 focus-visible:border-brand"
             />
             {validation.errors.indicativeValue ? (
               <p id="indicativeValue-error" role="alert" className="text-xs text-critical">
@@ -290,7 +290,7 @@ export function PropertyDetailsForm({ initialValues }: PropertyDetailsFormProps 
             ) : null}
           </div>
 
-          <div className="flex flex-col gap-1.5">
+          <div className="flex flex-col gap-1.5 min-w-0">
             <label htmlFor="offeringTarget" className="text-sm font-medium text-ink-muted">
               Offering target (mIDR)
             </label>
@@ -303,8 +303,15 @@ export function PropertyDetailsForm({ initialValues }: PropertyDetailsFormProps 
               onChange={(e) => updateField("offeringTarget", e.target.value)}
               placeholder="3000000000"
               aria-invalid={!!validation.errors.offeringTarget || !!validation.errors.invariant}
-              aria-describedby={validation.errors.offeringTarget ? "offeringTarget-error" : undefined}
-              className="ap-tabular rounded-lg border border-line-strong bg-surface px-3 py-2.5 text-sm text-ink placeholder:text-ink-subtle"
+              aria-describedby={
+                [
+                  validation.errors.offeringTarget && "offeringTarget-error",
+                  validation.errors.invariant && "offering-invariant-error",
+                ]
+                  .filter(Boolean)
+                  .join(" ") || undefined
+              }
+              className="ap-tabular w-full rounded-lg border border-line-strong bg-surface px-3 py-2.5 text-sm text-ink placeholder:text-ink-subtle focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 focus-visible:border-brand"
             />
             {validation.errors.offeringTarget ? (
               <p id="offeringTarget-error" role="alert" className="text-xs text-critical">
@@ -313,7 +320,7 @@ export function PropertyDetailsForm({ initialValues }: PropertyDetailsFormProps 
             ) : null}
           </div>
 
-          <div className="flex flex-col gap-1.5">
+          <div className="flex flex-col gap-1.5 min-w-0">
             <label htmlFor="economicRightsBps" className="text-sm font-medium text-ink-muted">
               Economic rights (bps)
             </label>
@@ -328,10 +335,10 @@ export function PropertyDetailsForm({ initialValues }: PropertyDetailsFormProps 
               aria-invalid={!!validation.errors.economicRightsBps}
               aria-describedby={
                 validation.errors.economicRightsBps
-                  ? "economicRightsBps-error"
+                  ? "economicRightsBps-error economicRightsBps-hint"
                   : "economicRightsBps-hint"
               }
-              className="ap-tabular rounded-lg border border-line-strong bg-surface px-3 py-2.5 text-sm text-ink placeholder:text-ink-subtle"
+              className="ap-tabular w-full rounded-lg border border-line-strong bg-surface px-3 py-2.5 text-sm text-ink placeholder:text-ink-subtle focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 focus-visible:border-brand"
             />
             <p id="economicRightsBps-hint" className="text-xs text-ink-subtle">
               {bpsResult.isValid && bpsResult.bps !== null
@@ -345,7 +352,7 @@ export function PropertyDetailsForm({ initialValues }: PropertyDetailsFormProps 
             ) : null}
           </div>
 
-          <div className="flex flex-col gap-1.5">
+          <div className="flex flex-col gap-1.5 min-w-0">
             <label htmlFor="tokenSupply" className="text-sm font-medium text-ink-muted">
               Token supply (AVNUSA)
             </label>
@@ -358,8 +365,15 @@ export function PropertyDetailsForm({ initialValues }: PropertyDetailsFormProps 
               onChange={(e) => updateField("tokenSupply", e.target.value)}
               placeholder="300000"
               aria-invalid={!!validation.errors.tokenSupply || !!validation.errors.invariant}
-              aria-describedby={validation.errors.tokenSupply ? "tokenSupply-error" : undefined}
-              className="ap-tabular rounded-lg border border-line-strong bg-surface px-3 py-2.5 text-sm text-ink placeholder:text-ink-subtle"
+              aria-describedby={
+                [
+                  validation.errors.tokenSupply && "tokenSupply-error",
+                  validation.errors.invariant && "offering-invariant-error",
+                ]
+                  .filter(Boolean)
+                  .join(" ") || undefined
+              }
+              className="ap-tabular w-full rounded-lg border border-line-strong bg-surface px-3 py-2.5 text-sm text-ink placeholder:text-ink-subtle focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 focus-visible:border-brand"
             />
             {validation.errors.tokenSupply ? (
               <p id="tokenSupply-error" role="alert" className="text-xs text-critical">
@@ -368,7 +382,7 @@ export function PropertyDetailsForm({ initialValues }: PropertyDetailsFormProps 
             ) : null}
           </div>
 
-          <div className="flex flex-col gap-1.5 sm:col-span-2 lg:col-span-2">
+          <div className="flex flex-col gap-1.5 sm:col-span-2 lg:col-span-2 min-w-0">
             <label htmlFor="tokenPrice" className="text-sm font-medium text-ink-muted">
               Token price (mIDR per unit)
             </label>
@@ -381,8 +395,15 @@ export function PropertyDetailsForm({ initialValues }: PropertyDetailsFormProps 
               onChange={(e) => updateField("tokenPrice", e.target.value)}
               placeholder="10000"
               aria-invalid={!!validation.errors.tokenPrice || !!validation.errors.invariant}
-              aria-describedby={validation.errors.tokenPrice ? "tokenPrice-error" : undefined}
-              className="ap-tabular rounded-lg border border-line-strong bg-surface px-3 py-2.5 text-sm text-ink placeholder:text-ink-subtle"
+              aria-describedby={
+                [
+                  validation.errors.tokenPrice && "tokenPrice-error",
+                  validation.errors.invariant && "offering-invariant-error",
+                ]
+                  .filter(Boolean)
+                  .join(" ") || undefined
+              }
+              className="ap-tabular w-full rounded-lg border border-line-strong bg-surface px-3 py-2.5 text-sm text-ink placeholder:text-ink-subtle focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 focus-visible:border-brand"
             />
             {validation.errors.tokenPrice ? (
               <p id="tokenPrice-error" role="alert" className="text-xs text-critical">
@@ -394,7 +415,7 @@ export function PropertyDetailsForm({ initialValues }: PropertyDetailsFormProps 
 
         {/* Live Invariant Verification Box */}
         <div
-          className={`rounded-lg border p-3 text-xs leading-relaxed ${
+          className={`rounded-lg border p-3 text-xs leading-relaxed min-w-0 break-words ${
             matchesInvariant
               ? "border-verified/30 bg-verified-soft text-ink-strong"
               : "border-critical/30 bg-critical-soft text-critical"
@@ -407,7 +428,7 @@ export function PropertyDetailsForm({ initialValues }: PropertyDetailsFormProps 
             <span>Target == Supply × Price</span>
           </div>
           {calculatedTarget !== null && parsedSupply !== null && parsedPrice !== null ? (
-            <p className="mt-1 ap-tabular">
+            <p className="mt-1 ap-tabular break-words">
               Supply ({formatWholeUnits(parsedSupply)}) × Price ({formatWholeUnits(parsedPrice)} mIDR) ={" "}
               {formatWholeUnits(calculatedTarget)} mIDR
               {matchesInvariant ? (
@@ -426,19 +447,22 @@ export function PropertyDetailsForm({ initialValues }: PropertyDetailsFormProps 
             </p>
           )}
           {validation.errors.invariant ? (
-            <p className="mt-1 font-semibold text-critical">{validation.errors.invariant}</p>
+            <p id="offering-invariant-error" role="alert" className="mt-1 font-semibold text-critical break-words">
+              {validation.errors.invariant}
+            </p>
           ) : null}
         </div>
       </div>
 
       <LegalTitleDisclaimer className="max-w-2xl" />
 
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-2 min-w-0">
         <ActionButton
           label="Register property"
           tone="primary"
           disabled
           missingPrerequisite={missingPrerequisite}
+          className="w-full sm:w-auto"
         />
         <p className="text-xs text-ink-subtle">
           Registering creates the asset record on-chain. It does not mint the

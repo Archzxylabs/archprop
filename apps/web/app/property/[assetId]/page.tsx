@@ -72,7 +72,7 @@ export default async function PropertyPage({ params }: PageProps) {
   );
 
   return (
-    <div className="mx-auto w-full max-w-6xl px-5 py-10">
+    <div className="mx-auto w-full max-w-6xl px-4 sm:px-5 py-8 sm:py-10">
       {/* 1. Property overview */}
       <section aria-labelledby="overview-heading" className="flex flex-col gap-4">
         <div className="flex flex-col gap-1">
