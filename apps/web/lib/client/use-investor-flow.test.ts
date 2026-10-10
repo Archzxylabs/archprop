@@ -8,11 +8,13 @@ import {
   StaleReadGuard,
   TransactionRevertedError,
   canResetInvestorTx,
+  commitInvestorTxState,
   deriveInvestorAction,
   evaluateInvestorWriteGuard,
   evaluateWriteBoundary,
   executeApproveTransaction,
   executeInvestTransaction,
+  initialInvestorTxState,
   loadInvestorSnapshot,
   mapWriteErrorToTxState,
   reduceDuplicateWriteAttempt,
@@ -959,6 +961,29 @@ describe("duplicate write rejection and reset safety (FE-002D-CORRECTION-2)", ()
       txPhase: preservedState.phase,
     });
     expect(thirdAttemptGuard.canProceed).toBe(false);
+  });
+
+  it("updates the guard ref synchronously before React can render a receipt-unknown state", () => {
+    const stateRef = { current: initialInvestorTxState };
+    const unknownState: InvestorTxState = {
+      phase: "receipt-unknown",
+      action: "invest",
+      amount: 1_000_000n,
+      txHash: dummyTxHash,
+      error: "Receipt lookup timed out after broadcast.",
+    };
+
+    const renderedNext = commitInvestorTxState(stateRef, unknownState);
+
+    expect(renderedNext).toBe(unknownState);
+    expect(stateRef.current).toBe(unknownState);
+    expect(
+      evaluateInvestorWriteGuard({
+        isWriteInFlight: false,
+        txPhase: stateRef.current.phase,
+      }).canProceed,
+    ).toBe(false);
+    expect(stateRef.current.txHash).toBe(dummyTxHash);
   });
 
   it("resetTx cannot erase an unresolved broadcast or pending write, but resets resolved outcomes truthfully", () => {

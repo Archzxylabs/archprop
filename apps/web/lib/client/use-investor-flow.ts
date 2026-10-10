@@ -74,6 +74,25 @@ export const initialInvestorTxState: InvestorTxState = {
   error: null,
 };
 
+export type InvestorTxStateUpdate =
+  | InvestorTxState
+  | ((currentState: InvestorTxState) => InvestorTxState);
+
+/**
+ * Applies a transaction-state transition to the synchronous guard ref before
+ * React is asked to render it. This closes the gap between an async write
+ * settling and the next effect/render: a retry in that gap observes the new
+ * pending or receipt-unknown phase and remains blocked.
+ */
+export function commitInvestorTxState(
+  stateRef: { current: InvestorTxState },
+  update: InvestorTxStateUpdate,
+): InvestorTxState {
+  const nextState = typeof update === "function" ? update(stateRef.current) : update;
+  stateRef.current = nextState;
+  return nextState;
+}
+
 /**
  * True while a transaction outcome is still pending.
  *
@@ -798,11 +817,9 @@ export function useInvestorFlow(options: UseInvestorFlowOptions = {}): UseInvest
   const pendingWriteRef = useRef(false);
   const txStateRef = useRef<InvestorTxState>(initialInvestorTxState);
 
-  // The ref mirrors the rendered phase so a write started later in the same
-  // tick can see it without re-reading React state.
-  useEffect(() => {
-    txStateRef.current = txState;
-  }, [txState]);
+  const updateTxState = useCallback((update: InvestorTxStateUpdate) => {
+    setTxState(commitInvestorTxState(txStateRef, update));
+  }, []);
 
   // The config/client are memoized in chain-client, so these references are
   // stable across renders and cannot re-trigger the refresh effect by
@@ -873,8 +890,8 @@ export function useInvestorFlow(options: UseInvestorFlowOptions = {}): UseInvest
   }, [refresh]);
 
   const resetTx = useCallback(() => {
-    setTxState((current) => reduceResetTxState(current));
-  }, []);
+    updateTxState((current) => reduceResetTxState(current));
+  }, [updateTxState]);
 
   /**
    * Re-reads the offering and the connected wallet's investor state so the
@@ -924,7 +941,7 @@ export function useInvestorFlow(options: UseInvestorFlowOptions = {}): UseInvest
     async (action: InvestorWriteAction, amount: bigint): Promise<TxHash | null> => {
       const client = getClient();
       if (!client || !config) {
-        setTxState({
+        updateTxState({
           phase: "failed",
           action,
           amount,
@@ -934,7 +951,7 @@ export function useInvestorFlow(options: UseInvestorFlowOptions = {}): UseInvest
         return null;
       }
       if (!address || !walletClient) {
-        setTxState({
+        updateTxState({
           phase: "failed",
           action,
           amount,
@@ -944,7 +961,7 @@ export function useInvestorFlow(options: UseInvestorFlowOptions = {}): UseInvest
         return null;
       }
       if (chainId !== EXPECTED_CHAIN_ID) {
-        setTxState({
+        updateTxState({
           phase: "failed",
           action,
           amount,
@@ -953,13 +970,13 @@ export function useInvestorFlow(options: UseInvestorFlowOptions = {}): UseInvest
         });
         return null;
       }
-      setTxState({ phase: "awaiting-signature", action, amount, txHash: null, error: null });
+      updateTxState({ phase: "awaiting-signature", action, amount, txHash: null, error: null });
 
       let fresh: { offering: DerivedOffering | null; investor: InvestorChainState | null };
       try {
         fresh = await readWritePreconditions(client, config.addresses);
       } catch (err) {
-        setTxState({
+        updateTxState({
           phase: "failed",
           action,
           amount,
@@ -983,7 +1000,7 @@ export function useInvestorFlow(options: UseInvestorFlowOptions = {}): UseInvest
       });
 
       if (!decision.canWrite) {
-        setTxState({
+        updateTxState({
           phase: "failed",
           action,
           amount,
@@ -994,7 +1011,7 @@ export function useInvestorFlow(options: UseInvestorFlowOptions = {}): UseInvest
       }
 
       if (decision.action !== action) {
-        setTxState({
+        updateTxState({
           phase: "failed",
           action,
           amount,
@@ -1008,7 +1025,11 @@ export function useInvestorFlow(options: UseInvestorFlowOptions = {}): UseInvest
       }
 
       const onPhase: TxPhaseListener = (update) => {
-        setTxState((previous) => ({ ...previous, phase: update.phase, txHash: update.txHash }));
+        updateTxState((previous) => ({
+          ...previous,
+          phase: update.phase,
+          txHash: update.txHash,
+        }));
       };
 
       try {
@@ -1035,11 +1056,11 @@ export function useInvestorFlow(options: UseInvestorFlowOptions = {}): UseInvest
                 onPhase,
               });
 
-        setTxState({ phase: "confirmed", action, amount, txHash: hash, error: null });
+        updateTxState({ phase: "confirmed", action, amount, txHash: hash, error: null });
         void refresh();
         return hash;
       } catch (err) {
-        setTxState(mapWriteErrorToTxState(err, action, amount));
+        updateTxState(mapWriteErrorToTxState(err, action, amount));
         // A broadcast whose receipt could not be read keeps its hash and stays
         // pending; everything else can be safely re-read.
         if (!(err instanceof ReceiptUnavailableError)) {
@@ -1059,6 +1080,7 @@ export function useInvestorFlow(options: UseInvestorFlowOptions = {}): UseInvest
       expectedOfferingTarget,
       offeringId,
       refresh,
+      updateTxState,
     ],
   );
 
@@ -1082,7 +1104,7 @@ export function useInvestorFlow(options: UseInvestorFlowOptions = {}): UseInvest
 
       if (!guard.canProceed) {
         // A rejected duplicate attempt leaves original state completely intact.
-        // It must never call setTxState or simulateContract/writeContract.
+        // It must never call updateTxState or simulateContract/writeContract.
         return null;
       }
 
