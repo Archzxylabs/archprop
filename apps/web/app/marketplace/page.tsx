@@ -16,6 +16,7 @@ import {
 } from "@/lib/client/view-models";
 import {
   deriveOfferingForAsset,
+  describeOfferingEconomicsMismatch,
   getArchpropPublicClient,
   getClientChainConfig,
   inspectClientChainConfig,
@@ -30,6 +31,15 @@ import {
  * status, or funding percentage. Ubud/Lombok remain non-investable seed cards.
  */
 
+/**
+ * Rendered on every request.
+ *
+ * Funding and offering state are chain-authoritative, so the page is never
+ * frozen into a build-time static snapshot whose percentages would age into a
+ * false claim about the offering.
+ */
+export const dynamic = "force-dynamic";
+
 /** The published one-line summary for a listing, from its seed. */
 function listingSummary(externalId: string): string {
   return findListing(externalId)?.summary ?? "";
@@ -39,6 +49,7 @@ export default async function MarketplacePage() {
   const config = getClientChainConfig();
 
   let readFunding: (assetId: AssetId) => ChainDataState<FundingView>;
+  let villaNusaMismatch: string | null = null;
 
   if (config) {
     try {
@@ -48,6 +59,11 @@ export default async function MarketplacePage() {
         config.addresses,
         VILLA_NUSA.id,
       );
+
+      villaNusaMismatch = describeOfferingEconomicsMismatch(villaNusaOffering, {
+        tokenPrice: VILLA_NUSA.tokenPrice,
+        offeringTarget: VILLA_NUSA.offeringTarget,
+      });
 
       readFunding = (assetId: AssetId): ChainDataState<FundingView> => {
         if (assetId.toLowerCase() === VILLA_NUSA.id.toLowerCase()) {
@@ -96,7 +112,8 @@ export default async function MarketplacePage() {
         <p className="max-w-2xl text-sm leading-relaxed text-ink-muted">
           Every listing publishes its name, location, and verification state.
           Raised amount, funding progress, and balances are read from the
-          blockchain and are shown only once that read succeeds.
+          blockchain on every request and are shown only once that read
+          succeeds.
         </p>
       </header>
 
@@ -169,13 +186,31 @@ export default async function MarketplacePage() {
                   <p className="ap-eyebrow">Funding</p>
                   <ChainValue state={card.funding} label="funding progress">
                     {(funding) => (
-                      <span className="ap-tabular text-sm font-semibold text-ink-strong">
-                        {formatBps(funding.percentBps)} ·{" "}
-                        {formatWholeUnits(funding.raisedAmount)} of{" "}
-                        {formatWholeUnits(funding.targetAmount)} mIDR
+                      <span className="flex flex-col gap-1">
+                        <span className="ap-tabular text-sm font-semibold text-ink-strong">
+                          {formatBps(funding.percentBps)} ·{" "}
+                          {formatWholeUnits(funding.raisedAmount)} of{" "}
+                          {formatWholeUnits(funding.targetAmount)} mIDR
+                        </span>
+                        {card.fundamentals &&
+                        funding.targetAmount !== card.fundamentals.offeringTarget ? (
+                          <span role="alert" className="text-xs font-medium text-critical">
+                            The live offering target (
+                            {formatWholeUnits(funding.targetAmount)} mIDR) differs from the
+                            published offering size (
+                            {formatWholeUnits(card.fundamentals.offeringTarget)} mIDR), so this
+                            listing cannot be invested in until the two agree.
+                          </span>
+                        ) : null}
                       </span>
                     )}
                   </ChainValue>
+                  {card.externalId === VILLA_NUSA.externalId && villaNusaMismatch ? (
+                    <p role="alert" className="mt-1 text-xs font-medium text-critical">
+                      {villaNusaMismatch} Investment is disabled for this listing until the
+                      live offering matches the published Villa Nusa constants.
+                    </p>
+                  ) : null}
                 </div>
 
                 {card.assetId ? (

@@ -39,7 +39,12 @@ import {
  *
  * The six sections appear in the order the PRD fixes: overview, verification,
  * economic rights, offering, on-chain proof, revenue.
+ *
+ * Rendered on every request: lifecycle, attestation, and offering state are
+ * chain-authoritative, so a build-time static snapshot would age into a false
+ * claim about the offering.
  */
+export const dynamic = "force-dynamic";
 
 interface PageProps {
   params: Promise<{ assetId: string }>;
@@ -334,6 +339,7 @@ export default async function PropertyPage({ params }: PageProps) {
         {listing.fundamentals ? (
           <div className="mt-6">
             <InvestmentPanel
+              assetId={canonicalAssetId}
               tokenPrice={listing.fundamentals.tokenPrice}
               tokenSymbol={listing.fundamentals.tokenSymbol}
               offeringTarget={listing.fundamentals.offeringTarget}
@@ -378,8 +384,7 @@ export default async function PropertyPage({ params }: PageProps) {
             ) : (
               <dd className="text-ink-muted">
                 Registry address unavailable — no validated contract address is
-                configured in this environment. Arbiscan links appear here once
-                chain configuration is wired (FE-002).
+                configured in this environment, so no Arbiscan link is offered.
               </dd>
             )}
           </div>
