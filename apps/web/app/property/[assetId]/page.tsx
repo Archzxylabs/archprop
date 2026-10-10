@@ -80,22 +80,32 @@ export default async function PropertyPage({ params }: PageProps) {
   if (config) {
     try {
       const client = getArchpropPublicClient(config);
-      const [attestations, offering] = await Promise.all([
+      const [attestationResult, offeringResult] = await Promise.allSettled([
         fetchAttestationRecords(client, config.addresses.registry, canonicalAssetId),
         deriveOfferingForAsset(client, config.addresses, canonicalAssetId),
       ]);
 
-      derivedOffering = offering;
-
-      if (attestations.ownership || attestations.valuation) {
-        verificationState = chainReady(attestations);
+      if (attestationResult.status === "rejected") {
+        const reason = attestationResult.reason instanceof Error
+          ? attestationResult.reason.message
+          : String(attestationResult.reason);
+        verificationState = chainError(`Failed to read attestations: ${reason}`);
+      } else if (attestationResult.value.ownership || attestationResult.value.valuation) {
+        verificationState = chainReady(attestationResult.value);
       } else {
         verificationState = chainUnavailable(
           "No confirmed attestations found on-chain for this asset.",
         );
       }
 
-      if (offering) {
+      if (offeringResult.status === "rejected") {
+        const reason = offeringResult.reason instanceof Error
+          ? offeringResult.reason.message
+          : String(offeringResult.reason);
+        offeringState = chainError(`Failed to read offering accounting: ${reason}`);
+      } else if (offeringResult.value) {
+        const offering = offeringResult.value;
+        derivedOffering = offering;
         offeringState = chainReady({
           raisedAmount: offering.raised,
           targetAmount: offering.target,

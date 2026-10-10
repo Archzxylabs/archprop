@@ -93,8 +93,122 @@ describe("deriveOfferingForAsset", () => {
   const propertyTokenAddress = "0x7777777777777777777777777777777777777777" as const;
   const canonicalAssetId = "0x1756428cf9ce005285ddcf87c75240c798535bed95c6aeca6a5a7d3eb7b364ae" as const;
 
+  const addresses = {
+    offeringEscrow: escrowAddress,
+    registry: registryAddress,
+    mockIdr: mockIdrAddress,
+  };
+
+  function boundedRpc(head: bigint) {
+    return {
+      getBlockNumber: vi.fn(async () => head),
+      getLogs: vi.fn(async (params: { fromBlock: bigint; toBlock: bigint }) => {
+        // Reproduce the provider's inclusive block-range limit.
+        if (params.toBlock - params.fromBlock + 1n > 10_000_000n) {
+          throw new Error("query spans too many blocks; narrow the block range");
+        }
+        return [{ args: { offeringId: 42n } }];
+      }),
+      readContract: vi.fn(async (params: { functionName: string }) => {
+        if (params.functionName === "assetToken") return propertyTokenAddress;
+        return {
+          assetId: canonicalAssetId,
+          propertyToken: propertyTokenAddress,
+          paymentToken: mockIdrAddress,
+          target: 3_000_000_000n,
+          tokenPrice: 10_000n,
+          deadline: 1_800_000_000n,
+          raised: 1_000_000_000n,
+          issuerTreasury: "0x8888888888888888888888888888888888888888",
+          status: 0,
+          fundsReleased: false,
+        };
+      }),
+    };
+  }
+
+  it("finds a recent offering at the reported Sepolia height without exceeding the RPC limit", async () => {
+    const rpc = boundedRpc(317_792_901n);
+    const result = await deriveOfferingForAsset(
+      rpc as unknown as PublicClient, addresses, canonicalAssetId,
+    );
+
+    expect(result?.offeringId).toBe(42n);
+    expect(rpc.getLogs).toHaveBeenCalledTimes(1);
+    expect(rpc.getLogs).toHaveBeenCalledWith(expect.objectContaining({
+      address: escrowAddress,
+      args: { assetId: canonicalAssetId },
+      fromBlock: 307_792_902n,
+      toBlock: 317_792_901n,
+    }));
+  });
+
+  it("finds older offerings by continuing through contiguous ranges", async () => {
+    const rpc = boundedRpc(20_000_000n);
+    rpc.getLogs.mockResolvedValueOnce([]);
+    const result = await deriveOfferingForAsset(
+      rpc as unknown as PublicClient, addresses, canonicalAssetId,
+    );
+
+    expect(result?.offeringId).toBe(42n);
+    expect(rpc.getLogs).toHaveBeenCalledTimes(2);
+    expect(rpc.getLogs).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      fromBlock: 10_000_001n, toBlock: 20_000_000n,
+    }));
+    expect(rpc.getLogs).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      fromBlock: 1n, toBlock: 10_000_000n,
+    }));
+  });
+
+  it("returns null only after checking every range including block zero", async () => {
+    const rpc = boundedRpc(20_000_000n);
+    rpc.getLogs.mockResolvedValue([]);
+    const result = await deriveOfferingForAsset(
+      rpc as unknown as PublicClient, addresses, canonicalAssetId,
+    );
+
+    expect(result).toBeNull();
+    expect(rpc.getLogs.mock.calls.map(([params]) => [params.fromBlock, params.toBlock])).toEqual([
+      [10_000_001n, 20_000_000n], [1n, 10_000_000n], [0n, 0n],
+    ]);
+    expect(rpc.readContract).not.toHaveBeenCalled();
+  });
+
+  it("keeps the latest event from the newest matching range", async () => {
+    const rpc = boundedRpc(317_792_901n);
+    rpc.getLogs.mockResolvedValue([{ args: { offeringId: 7n } }, { args: { offeringId: 42n } }]);
+    const result = await deriveOfferingForAsset(
+      rpc as unknown as PublicClient, addresses, canonicalAssetId,
+    );
+
+    expect(result?.offeringId).toBe(42n);
+    expect(rpc.getLogs).toHaveBeenCalledTimes(1);
+  });
+
+  it("propagates a failed range read instead of treating the offering as absent", async () => {
+    const rpc = boundedRpc(20_000_000n);
+    rpc.getLogs.mockResolvedValueOnce([]).mockRejectedValueOnce(new Error("rpc unavailable"));
+
+    await expect(deriveOfferingForAsset(
+      rpc as unknown as PublicClient, addresses, canonicalAssetId,
+    )).rejects.toThrow("rpc unavailable");
+    expect(rpc.readContract).not.toHaveBeenCalled();
+  });
+
+  it("queries a new chain without producing a negative block number", async () => {
+    const rpc = boundedRpc(0n);
+    rpc.getLogs.mockResolvedValue([]);
+
+    expect(await deriveOfferingForAsset(
+      rpc as unknown as PublicClient, addresses, canonicalAssetId,
+    )).toBeNull();
+    expect(rpc.getLogs).toHaveBeenCalledWith(expect.objectContaining({ fromBlock: 0n, toBlock: 0n }));
+    expect(rpc.getLogs).toHaveBeenCalledTimes(1);
+  });
+
   it("returns null when no OfferingCreated logs exist for the asset ID", async () => {
     const mockClient = {
+      getBlockNumber: vi.fn(async () => 100n),
       getLogs: vi.fn(async () => []),
     } as unknown as PublicClient;
 
@@ -114,6 +228,7 @@ describe("deriveOfferingForAsset", () => {
 
   it("correctly derives offering and validates addresses when OfferingCreated event is confirmed", async () => {
     const mockClient = {
+      getBlockNumber: vi.fn(async () => 100n),
       getLogs: vi.fn(async () => [
         {
           args: {
@@ -171,6 +286,7 @@ describe("deriveOfferingForAsset", () => {
   it("fails closed when returned offering assetId does not match requested assetId", async () => {
     const wrongAssetId = "0x9999999999999999999999999999999999999999999999999999999999999999";
     const mockClient = {
+      getBlockNumber: vi.fn(async () => 100n),
       getLogs: vi.fn(async () => [
         {
           args: {
@@ -209,6 +325,7 @@ describe("deriveOfferingForAsset", () => {
   it("fails closed when paymentToken does not match configured MockIDR", async () => {
     const wrongPaymentToken = "0x0000000000000000000000000000000000000001";
     const mockClient = {
+      getBlockNumber: vi.fn(async () => 100n),
       getLogs: vi.fn(async () => [
         {
           args: {
@@ -247,6 +364,7 @@ describe("deriveOfferingForAsset", () => {
   it("fails closed when propertyToken does not match registry linked token", async () => {
     const unlinkedPropertyToken = "0x9999999999999999999999999999999999999999";
     const mockClient = {
+      getBlockNumber: vi.fn(async () => 100n),
       getLogs: vi.fn(async () => [
         {
           args: {
@@ -470,6 +588,7 @@ describe("fetchOfferingById status decoding (fail closed)", () => {
 
   function clientReturning(overrides: Record<string, unknown>): PublicClient {
     return {
+      getBlockNumber: vi.fn(async () => 100n),
       getLogs: vi.fn(async () => [
         {
           args: {

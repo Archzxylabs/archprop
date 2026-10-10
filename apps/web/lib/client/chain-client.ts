@@ -277,51 +277,65 @@ export async function fetchOfferingById(
   };
 }
 
+// The public Arbitrum Sepolia RPC accepts at most 10,000,000 blocks per log query.
+const OFFERING_LOG_BLOCK_RANGE = 10_000_000n;
+
 /**
  * Derives Villa Nusa's offering ID from a confirmed OfferingCreated event emitted
  * by the configured escrow for the canonical asset ID; does not assume offering ID 1.
  * Validates the returned offering asset/token/payment addresses and reads raised, target,
  * price, deadline, and status from chain.
+ * Searches bounded ranges newest first, so recent offerings need only one query
+ * while older offerings remain discoverable without scanning from genesis at once.
  */
 export async function deriveOfferingForAsset(
   client: PublicClient,
   addresses: OfferingReadAddresses,
   assetId: AssetId,
 ): Promise<DerivedOffering | null> {
-  const logs = await client.getLogs({
-    address: addresses.offeringEscrow,
-    event: {
-      type: "event",
-      name: "OfferingCreated",
-      inputs: [
-        { name: "offeringId", type: "uint256", indexed: true },
-        { name: "assetId", type: "bytes32", indexed: true },
-        { name: "token", type: "address", indexed: true },
-        { name: "target", type: "uint256", indexed: false },
-        { name: "tokenPrice", type: "uint256", indexed: false },
-        { name: "deadline", type: "uint64", indexed: false },
-      ],
-    },
-    args: {
-      assetId,
-    },
-    fromBlock: 0n,
-  });
+  let toBlock = await client.getBlockNumber();
 
-  if (!logs || logs.length === 0) {
-    return null;
-  }
+  for (;;) {
+    const fromBlock =
+      toBlock >= OFFERING_LOG_BLOCK_RANGE
+        ? toBlock - OFFERING_LOG_BLOCK_RANGE + 1n
+        : 0n;
+    const logs = await client.getLogs({
+      address: addresses.offeringEscrow,
+      event: {
+        type: "event",
+        name: "OfferingCreated",
+        inputs: [
+          { name: "offeringId", type: "uint256", indexed: true },
+          { name: "assetId", type: "bytes32", indexed: true },
+          { name: "token", type: "address", indexed: true },
+          { name: "target", type: "uint256", indexed: false },
+          { name: "tokenPrice", type: "uint256", indexed: false },
+          { name: "deadline", type: "uint64", indexed: false },
+        ],
+      },
+      args: {
+        assetId,
+      },
+      fromBlock,
+      toBlock,
+    });
 
-  const latestLog = logs[logs.length - 1];
-  if (!latestLog || !latestLog.args) {
-    return null;
-  }
-  const offeringId = latestLog.args.offeringId;
-  if (offeringId === undefined) {
-    return null;
-  }
+    if (logs.length > 0) {
+      const latestLog = logs[logs.length - 1];
+      const offeringId = latestLog?.args?.offeringId;
+      if (offeringId === undefined) {
+        return null;
+      }
 
-  return fetchOfferingById(client, addresses, offeringId, assetId);
+      return fetchOfferingById(client, addresses, offeringId, assetId);
+    }
+
+    if (fromBlock === 0n) {
+      return null;
+    }
+    toBlock = fromBlock - 1n;
+  }
 }
 
 export interface DisplayedOfferingConstants {

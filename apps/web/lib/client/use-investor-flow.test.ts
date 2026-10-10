@@ -485,6 +485,7 @@ describe("StaleReadGuard and loadInvestorSnapshot", () => {
 
   function mockClient(investorAddress: Address, delayMs = 0): PublicClient {
     return {
+      getBlockNumber: vi.fn(async () => 100n),
       getLogs: vi.fn(async () => [
         {
           args: {
@@ -603,6 +604,7 @@ describe("StaleReadGuard and loadInvestorSnapshot", () => {
 
     const failing = loadInvestorSnapshot({
       client: {
+        getBlockNumber: vi.fn(async () => 100n),
         getLogs: vi.fn(async () => {
           throw new Error("rpc unavailable");
         }),
@@ -635,6 +637,7 @@ describe("StaleReadGuard and loadInvestorSnapshot", () => {
 
     await loadInvestorSnapshot({
       client: {
+        getBlockNumber: vi.fn(async () => 100n),
         getLogs: vi.fn(async () => []),
       } as unknown as PublicClient,
       addresses: ADDRESSES,
