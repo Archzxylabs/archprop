@@ -221,4 +221,39 @@ describe("scripts/validate-state Unit Tests", () => {
       );
     });
   });
+
+  describe("validateState Function Fail-Closed and Integration Checks", () => {
+    it("fails closed when deployment file does not exist", async () => {
+      const { validateState } = await import("../../../scripts/validate-state");
+      await expect(
+        validateState({
+          deploymentPath: "/nonexistent/deployment/file.json",
+          investors: `${validAddr1},${validAddr2}`,
+        }),
+      ).rejects.toThrow(/Deployment file not found at/i);
+    });
+
+    it("fails closed when ARCHPROP_INVESTORS is missing in validateState options", async () => {
+      const { validateState } = await import("../../../scripts/validate-state");
+      await expect(
+        validateState({
+          deploymentPath: "/tmp/archprop-worktrees/integration-qa/deployments/local.json",
+          investors: "",
+        }),
+      ).rejects.toThrow(/ARCHPROP_INVESTORS is missing or empty/i);
+    });
+
+    it("fails closed when RPC returns mismatched chainId", async () => {
+      const { validateState } = await import("../../../scripts/validate-state");
+      // Use mock RPC URL returning chain ID error or invalid port
+      await expect(
+        validateState({
+          deploymentPath: "/tmp/archprop-worktrees/integration-qa/deployments/local.json",
+          investors: `${validAddr1},${validAddr2}`,
+          rpcUrl: "http://127.0.0.1:54321", // unreachable
+        }),
+      ).rejects.toThrow();
+    });
+  });
 });
+

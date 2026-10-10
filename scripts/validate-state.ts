@@ -363,22 +363,20 @@ export async function validateState(options?: {
   // 4. Derive/confirm offeringId
   let offeringId = d.offeringId;
   if (!offeringId) {
-    try {
-      const offeringLogs = await publicClient.getLogs({
-        address: escrowAddress,
-        event: parseAbiItem(
-          "event OfferingCreated(uint256 indexed offeringId, bytes32 indexed assetId, address indexed token, uint256 target, uint256 tokenPrice, uint64 deadline)",
-        ),
-        args: { assetId },
-        fromBlock: 0n,
-      });
-      if (offeringLogs.length > 0 && offeringLogs[offeringLogs.length - 1]?.args?.offeringId !== undefined) {
-        offeringId = offeringLogs[offeringLogs.length - 1]!.args.offeringId!;
-      } else {
-        offeringId = 1n;
-      }
-    } catch {
-      offeringId = 1n;
+    const offeringLogs = await publicClient.getLogs({
+      address: escrowAddress,
+      event: parseAbiItem(
+        "event OfferingCreated(uint256 indexed offeringId, bytes32 indexed assetId, address indexed token, uint256 target, uint256 tokenPrice, uint64 deadline)",
+      ),
+      args: { assetId },
+      fromBlock: 0n,
+    });
+    if (offeringLogs.length > 0 && offeringLogs[offeringLogs.length - 1]?.args?.offeringId !== undefined) {
+      offeringId = offeringLogs[offeringLogs.length - 1]!.args.offeringId!;
+    } else {
+      throw new Error(
+        `No OfferingCreated event found on offering escrow ${escrowAddress} for assetId ${assetId}. Cannot verify offering state without confirmed on-chain event.`,
+      );
     }
   }
 
@@ -423,22 +421,20 @@ export async function validateState(options?: {
   // 8. Derive/confirm epochId
   let epochId = d.epochId;
   if (!epochId) {
-    try {
-      const revenueLogs = await publicClient.getLogs({
-        address: distributorAddress,
-        event: parseAbiItem(
-          "event RevenuePublished(uint256 indexed epochId, bytes32 indexed assetId, uint256 amount, bytes32 evidenceHash, uint64 claimDeadline)",
-        ),
-        args: { assetId },
-        fromBlock: 0n,
-      });
-      if (revenueLogs.length > 0 && revenueLogs[revenueLogs.length - 1]?.args?.epochId !== undefined) {
-        epochId = revenueLogs[revenueLogs.length - 1]!.args.epochId!;
-      } else {
-        epochId = 1n;
-      }
-    } catch {
-      epochId = 1n;
+    const revenueLogs = await publicClient.getLogs({
+      address: distributorAddress,
+      event: parseAbiItem(
+        "event RevenuePublished(uint256 indexed epochId, bytes32 indexed assetId, uint256 amount, bytes32 evidenceHash, uint64 claimDeadline)",
+      ),
+      args: { assetId },
+      fromBlock: 0n,
+    });
+    if (revenueLogs.length > 0 && revenueLogs[revenueLogs.length - 1]?.args?.epochId !== undefined) {
+      epochId = revenueLogs[revenueLogs.length - 1]!.args.epochId!;
+    } else {
+      throw new Error(
+        `No RevenuePublished event found on revenue distributor ${distributorAddress} for assetId ${assetId}. Cannot verify revenue state without confirmed on-chain event.`,
+      );
     }
   }
 

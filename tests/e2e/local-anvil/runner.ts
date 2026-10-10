@@ -206,7 +206,18 @@ export function getDeploymentPath(customPath?: string): string {
  * Verifies that all required Foundry contract artifacts exist.
  */
 export function checkArtifactsPrerequisite(customDir?: string): ArtifactCheck {
-  const artifactsDir = resolveArtifactsDir(customDir);
+  let artifactsDir = resolveArtifactsDir(customDir);
+  if (!customDir && !process.env.ARCHPROP_ARTIFACTS_DIR && !existsSync(artifactsDir)) {
+    const siblingOut = resolve("/tmp/archprop-worktrees/contracts/packages/contracts/out");
+    if (existsSync(siblingOut)) {
+      artifactsDir = siblingOut;
+    } else {
+      const rootOut = resolve("/home/pupulion/archprop/packages/contracts/out");
+      if (existsSync(rootOut)) {
+        artifactsDir = rootOut;
+      }
+    }
+  }
   const missingArtifacts: string[] = [];
 
   if (!existsSync(artifactsDir)) {
