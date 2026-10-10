@@ -263,6 +263,9 @@ event RevenueClaimed(uint256 indexed epochId, address indexed investor, uint256 
    valueless demo currency.
 4. Escrow accepts only approved investors, whole-token investment amounts,
    `paymentAmount % tokenPrice == 0`, and `raised + paymentAmount <= target`.
+   Investment credit requires the escrow's actual payment-token balance to
+   increase by exactly `paymentAmount`; fee-on-transfer or deflationary tokens
+   cannot create an undercollateralized allocation.
    Offering creation requires the registry-linked token, `ISSUANCE_READY`, a
    future deadline, nonzero treasury, and `target == totalSupply * tokenPrice`.
    Payments remain escrowed until successful finalization and release.

@@ -123,6 +123,26 @@ Metadata content hashing remains a separately documented limitation: this
 binding authenticates the creator and nonzero on-chain metadata hash, but does
 not claim that the DB's descriptive fields were cryptographically committed.
 
+## ADR-013 — Escrow credits only exact payment deposits
+
+**Decision:** `OfferingEscrow.invest` must verify its payment-token balance
+increased by exactly `paymentAmount` before retaining the investment and token
+allocation. Deflationary/fee-on-transfer payment tokens revert atomically.
+This hardens the existing escrow invariant without changing the frozen function
+signatures, constructors, lifecycle transitions, or events. A new custom error
+for mismatched receipt is permitted.
+
+**Why:** The previous implementation credited `paymentAmount` after
+`safeTransferFrom` without checking actual receipt. A fee-charging token could
+make `raised == target` while the escrow held less than `target`, breaking both
+issuer release and refund conservation. `RevenueDistributor` already checks
+exact deposits; primary offering accounting must do the same.
+
+**Test plan:** Keep the MockIDR golden path unchanged; add a focused fee-token
+regression proving the investment reverts, `raised`/allocation/payment remain
+zero, and the escrow holds no undercollateralized deposit. Run the full Foundry
+suite and local E2E after integration.
+
 ---
 
 ## Interface change process
