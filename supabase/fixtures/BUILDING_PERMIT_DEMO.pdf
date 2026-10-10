@@ -1,0 +1,76 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<<
+  /Type /Page
+  /Parent 2 0 R
+  /MediaBox [0 0 612 792]
+  /Contents 4 0 R
+  /Resources <<
+    /Font <<
+      /F1 5 0 R
+      /F2 6 0 R
+    >>
+  >>
+>>
+endobj
+4 0 obj
+<< /Length 738 >>
+stream
+BT
+/F1 18 Tf
+50 740 Td
+(DEMO / SYNTHETIC DOCUMENT) Tj
+/F2 10 Tf
+0 -20 Td
+(Hackathon Demo — Synthetic / Simulated Data) Tj
+/F1 14 Tf
+0 -35 Td
+(BUILDING PERMIT APPROVAL \(DEMO EVIDENCE\)) Tj
+/F2 11 Tf
+0 -25 Td
+(Asset: Villa Nusa \(ARCHPROP-001\)) Tj
+0 -18 Td
+(Location: Bali, Indonesia) Tj
+0 -18 Td
+(Permit Reference: PBG-DEMO-2026-BALI-001) Tj
+0 -18 Td
+(Permitted Use: Residential Hospitality Villa) Tj
+0 -18 Td
+(Status: Synthetic Construction Approval Record) Tj
+0 -18 Td
+(Disclaimer: Synthetic demonstration document for hackathon MVP only.) Tj
+0 -18 Td
+0 -30 Td
+/F1 9 Tf
+(NOTICE: This token does not represent direct legal title to the land.) Tj
+0 -14 Td
+(All real-world verification and revenue data in this MVP are simulated.) Tj
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>
+endobj
+6 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+xref
+0 7
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000283 00000 n 
+0000001072 00000 n 
+0000001147 00000 n 
+trailer
+<< /Size 7 /Root 1 0 R >>
+startxref
+1217
+%%EOF

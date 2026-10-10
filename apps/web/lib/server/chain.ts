@@ -1,0 +1,139 @@
+/**
+ * Read-only chain access for API routes.
+ *
+ * This module never signs, never holds a private key, and never submits a
+ * transaction. Its only job is to answer "did this already happen on-chain, and
+ * what did it say?" so the API can record a truthful cache entry rather than
+ * invent one. The backend deliberately routes no owner/verifier/investor
+ * wallet signing through a server key.
+ */
+
+import { decodeEventLog, parseAbiItem, type Log } from "viem";
+import type { ChainConfig } from "./config";
+
+/** Exact event signature from the frozen chain adapter contract. */
+export const REVENUE_PUBLISHED_EVENT = parseAbiItem(
+  "event RevenuePublished(uint256 indexed epochId, bytes32 indexed assetId, uint256 amount, bytes32 evidenceHash, uint64 claimDeadline)",
+);
+
+export interface RevenuePublishedLog {
+  epochId: bigint;
+  assetId: string;
+  amount: bigint;
+  evidenceHash: string;
+  claimDeadline: bigint;
+  blockNumber: number;
+  logIndex: number;
+}
+
+export type ReceiptCheck =
+  | { ok: true; blockNumber: number; logs: readonly Log[] }
+  | { ok: false; reason: "not_found" | "reverted" | "rpc_error" };
+
+/**
+ * Minimal receipt shape this module depends on. Declared structurally so tests
+ * and the route both work without a live RPC client.
+ */
+export interface ReceiptLike {
+  status: "success" | "reverted";
+  blockNumber: bigint;
+  logs: readonly Log[];
+}
+
+/**
+ * Fetches a receipt and confirms the transaction succeeded.
+ *
+ * A reverted or missing receipt is a hard failure: recording it would let the
+ * database claim a distribution exists when the chain says it does not.
+ */
+export async function fetchVerifiedReceipt(
+  getReceipt: (txHash: string) => Promise<ReceiptLike>,
+  txHash: string,
+): Promise<ReceiptCheck> {
+  try {
+    const receipt = await getReceipt(txHash);
+    if (receipt.status !== "success") {
+      return { ok: false, reason: "reverted" };
+    }
+    return {
+      ok: true,
+      blockNumber: Number(receipt.blockNumber),
+      logs: receipt.logs,
+    };
+  } catch (error) {
+    // A missing receipt and a transport failure are distinct outcomes, but
+    // both must be reported as unverified — never as success.
+    const message = error instanceof Error ? error.message : String(error);
+    if (/not found|notfound|does not exist/i.test(message)) {
+      return { ok: false, reason: "not_found" };
+    }
+    return { ok: false, reason: "rpc_error" };
+  }
+}
+
+/**
+ * Decodes the `RevenuePublished` logs in a receipt that belong to the
+ * distributor and match `assetId`.
+ *
+ * Anchoring to this transaction's own logs (rather than scanning the chain)
+ * means the receipt itself is the evidence. Filtering by `assetId` matters: a
+ * transaction can publish more than one epoch, so a receipt containing a
+ * matching event for a different asset must not be accepted for this one.
+ */
+export function decodeRevenuePublishedLogs(
+  logs: readonly Log[],
+  distributorAddress: string,
+  assetId: string,
+): RevenuePublishedLog[] {
+  const results: RevenuePublishedLog[] = [];
+  const wantedAsset = assetId.toLowerCase();
+  const wantedDistributor = distributorAddress.toLowerCase();
+
+  for (const log of logs) {
+    if (log.address.toLowerCase() !== wantedDistributor) {
+      continue;
+    }
+    let decoded;
+    try {
+      decoded = decodeEventLog({
+        abi: [REVENUE_PUBLISHED_EVENT],
+        data: log.data,
+        topics: log.topics,
+      });
+    } catch {
+      continue;
+    }
+    if (decoded.eventName !== "RevenuePublished") {
+      continue;
+    }
+    const args = decoded.args as {
+      epochId: bigint;
+      assetId: string;
+      amount: bigint;
+      evidenceHash: string;
+      claimDeadline: bigint;
+    };
+    if (args.assetId.toLowerCase() !== wantedAsset) {
+      continue;
+    }
+    results.push({
+      epochId: args.epochId,
+      assetId: args.assetId,
+      amount: args.amount,
+      evidenceHash: args.evidenceHash,
+      claimDeadline: args.claimDeadline,
+      blockNumber: Number(log.blockNumber ?? 0n),
+      logIndex: Number(log.logIndex ?? 0n),
+    });
+  }
+  return results;
+}
+
+/** Wraps a viem PublicClient's getTransactionReceipt as the injectable function. */
+export function receiptGetterFromClient(client: {
+  getTransactionReceipt: (args: { hash: `0x${string}` }) => Promise<ReceiptLike>;
+}): (txHash: string) => Promise<ReceiptLike> {
+  return (txHash: string) => client.getTransactionReceipt({ hash: txHash as `0x${string}` });
+}
+
+export type { ChainConfig };
