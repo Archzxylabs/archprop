@@ -26,7 +26,7 @@ export default function PortfolioPage() {
   );
 
   return (
-    <div className="mx-auto w-full max-w-4xl px-5 py-10">
+    <div className="ap-page mx-auto w-full max-w-4xl px-5 py-10">
       <header className="flex flex-col gap-2">
         <p className="ap-eyebrow">Portfolio</p>
         <h1 className="text-2xl font-semibold tracking-tight text-ink-strong sm:text-3xl">

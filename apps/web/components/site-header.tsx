@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import { usePathname } from "next/navigation";
 import { VILLA_NUSA } from "@archprop/shared";
 import { EXPECTED_CHAIN_ID } from "@/lib/client/view-models";
 import { useWallet } from "@/lib/client/wallet-context";
@@ -16,53 +16,45 @@ const NAV_ITEMS = [
   { href: "/admin", label: "Admin" },
 ] as const;
 
-/**
- * Site navigation.
- *
- * The six destinations plus the wordmark only fit side by side on genuinely
- * wide viewports, so the inline nav is gated behind `xl` (1280px). Below that —
- * phones *and* tablets, roughly 320–1279px — the destinations collapse into a
- * disclosure whose trigger keeps a visible focus ring and an accessible name,
- * and whose panel is a labelled `<nav>` in both layouts. Showing the inline nav
- * from `sm` instead would collide with the wordmark and the wallet/network
- * labels around 640–900px.
- */
 export function SiteHeader() {
   const [menuOpen, setMenuOpen] = useState(false);
+  const pathname = usePathname();
   const wallet = useWallet();
-
+  useEffect(() => {
+    if (!menuOpen) return;
+    const close = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setMenuOpen(false);
+        document.getElementById("menu-button")?.focus();
+      }
+    };
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, [menuOpen]);
   return (
-    <header className="sticky top-0 z-40 border-b border-line bg-surface/90 backdrop-blur supports-[backdrop-filter]:bg-surface/75">
-      <div className="mx-auto flex h-16 max-w-6xl items-center justify-between gap-3 px-4 sm:gap-6 sm:px-5">
+    <header className="site-header" id="site-header">
+      <div className="nav-shell">
         <Link
           href="/"
-          className="flex min-w-0 items-center gap-2.5 rounded-lg"
+          className="brand min-w-0"
           aria-label="Archprop home"
+          onClick={() => setMenuOpen(false)}
         >
-          <span
-            className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-brand-deep text-sm font-bold text-ink-inverse"
-            aria-hidden="true"
-          >
-            A
+          <span className="brand-mark" aria-hidden="true">
+            <i />
+            <i />
+            <i />
+            <i />
           </span>
-          <span className="flex min-w-0 flex-col leading-none">
-            <span className="truncate text-base font-semibold tracking-tight text-ink-strong">
-              Archprop
-            </span>
-            <span className="truncate text-2xs text-ink-subtle">
-              Real-World Asset Marketplace
-            </span>
-          </span>
+          <span>ARCHPROP</span>
         </Link>
-
-        {/* Inline navigation from `xl` up, where six links fit beside the wordmark. */}
         <nav aria-label="Primary" className="hidden xl:block">
-          <ul className="flex items-center gap-0.5">
+          <ul className="nav-links">
             {NAV_ITEMS.map((item) => (
               <li key={item.href}>
                 <Link
                   href={item.href}
-                  className="rounded-lg px-2.5 py-2 text-sm font-medium text-ink-muted transition-colors hover:bg-surface-sunken hover:text-ink-strong lg:px-3"
+                  aria-current={pathname === item.href ? "page" : undefined}
                 >
                   {item.label}
                 </Link>
@@ -70,124 +62,155 @@ export function SiteHeader() {
             ))}
           </ul>
         </nav>
-
-        <div className="flex shrink-0 items-center gap-2">
-          {/* Network and wallet labels appear only alongside the inline nav,
-              where there is room for them without crowding the wordmark. */}
-          <span className="hidden rounded-lg border border-line px-2.5 py-1.5 text-2xs font-medium text-ink-subtle xl:inline-flex">
+        <div className="nav-actions">
+          <span className="nav-status network-status hidden xl:inline-flex">
             Arbitrum Sepolia · {EXPECTED_CHAIN_ID}
           </span>
           {wallet.isConnected && wallet.address ? (
-            <div className="hidden items-center gap-2 xl:inline-flex">
+            <div className="wallet-actions hidden xl:inline-flex">
               {wallet.isWrongNetwork ? (
                 <button
                   type="button"
+                  className="network-error"
                   onClick={wallet.switchChain}
-                  className="rounded-lg border border-critical bg-critical-soft px-2.5 py-1 text-2xs font-semibold text-critical hover:bg-critical-soft/80"
                 >
                   Wrong Network
                 </button>
               ) : null}
-              <span className="ap-hash rounded-lg border border-line bg-surface-sunken px-3 py-1.5 text-xs font-semibold text-ink-strong">
+              <span className="wallet-address">
                 {wallet.address.slice(0, 6)}…{wallet.address.slice(-4)}
               </span>
               <button
                 type="button"
+                className="wallet-disconnect"
                 onClick={wallet.disconnect}
-                className="rounded-lg border border-line px-2.5 py-1 text-xs font-semibold text-ink-muted hover:bg-surface-sunken"
               >
                 Disconnect
               </button>
             </div>
           ) : (
-            <div className="hidden items-center gap-2 xl:inline-flex">
-              <span className="hidden rounded-lg border border-line bg-surface-sunken px-3 py-1.5 text-xs font-semibold text-ink-subtle xl:inline-flex">
+            <div className="wallet-actions hidden xl:inline-flex">
+              <span className="nav-status hidden xl:inline-flex">
                 Wallet not connected
               </span>
               <button
                 type="button"
+                className="button button-accent button-small"
                 onClick={wallet.connect}
                 disabled={wallet.isConnecting}
-                className="rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-ink-inverse hover:bg-brand-deep disabled:opacity-50"
               >
                 {wallet.isConnecting ? "Connecting…" : "Connect"}
+                <span aria-hidden="true">↗</span>
               </button>
             </div>
           )}
-
-          {/* Compact disclosure below `xl`, where the inline nav cannot fit. */}
+          <Link
+            href="/marketplace"
+            className="button button-accent button-small compact-explore xl:hidden"
+          >
+            Explore <span aria-hidden="true">↗</span>
+          </Link>
           <button
             type="button"
-            className="rounded-lg border border-line px-2.5 py-1.5 text-xs font-semibold text-ink-muted transition-colors hover:bg-surface-sunken hover:text-ink-strong focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand xl:hidden"
+            className="ap-menu-button xl:hidden"
+            id="menu-button"
             aria-expanded={menuOpen}
             aria-controls="primary-nav-mobile"
+            aria-label={menuOpen ? "Close menu" : "Open menu"}
             onClick={() => setMenuOpen((open) => !open)}
           >
-            {menuOpen ? "Close" : "Menu"}
+            <span />
+            <span />
           </button>
         </div>
       </div>
-
+      <noscript>
+        <nav
+          className="no-script-navigation"
+          aria-label="Navigation without JavaScript"
+        >
+          {NAV_ITEMS.map((item) => (
+            <Link key={item.href} href={item.href}>
+              {item.label}
+            </Link>
+          ))}
+        </nav>
+      </noscript>
       {menuOpen ? (
         <nav
           id="primary-nav-mobile"
           aria-label="Primary"
-          className="border-t border-line bg-surface xl:hidden"
+          className="mobile-nav xl:hidden"
         >
-          <ul className="mx-auto flex max-w-6xl flex-col px-4 py-2">
+          <ul>
             {NAV_ITEMS.map((item) => (
               <li key={item.href}>
                 <Link
                   href={item.href}
-                  className="block rounded-lg px-2 py-2.5 text-sm font-medium text-ink-muted transition-colors hover:bg-surface-sunken hover:text-ink-strong focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
+                  aria-current={pathname === item.href ? "page" : undefined}
                   onClick={() => setMenuOpen(false)}
                 >
                   {item.label}
+                  <span aria-hidden="true">↗</span>
                 </Link>
               </li>
             ))}
+          </ul>
+          <div className="mobile-wallet">
+            <span className="nav-status">
+              <span />
+              Arbitrum Sepolia · {EXPECTED_CHAIN_ID}
+            </span>
             {wallet.isConnected && wallet.address ? (
-              <li className="mt-2 border-t border-line pt-2">
-                <div className="flex items-center justify-between px-2 py-1">
-                  <span className="ap-hash text-xs font-semibold text-ink-strong">
-                    {wallet.address.slice(0, 6)}…{wallet.address.slice(-4)}
-                  </span>
+              <>
+                <span className="wallet-address">
+                  {wallet.address.slice(0, 6)}…{wallet.address.slice(-4)}
+                </span>
+                {wallet.isWrongNetwork ? (
                   <button
+                    className="network-error"
                     type="button"
-                    onClick={wallet.disconnect}
-                    className="rounded-lg border border-line px-2.5 py-1 text-xs font-semibold text-ink-muted hover:bg-surface-sunken"
+                    onClick={wallet.switchChain}
                   >
-                    Disconnect
+                    Wrong Network — Switch
                   </button>
-                </div>
-              </li>
-            ) : (
-              <li className="mt-2 border-t border-line pt-2">
+                ) : null}
                 <button
                   type="button"
-                  onClick={wallet.connect}
-                  disabled={wallet.isConnecting}
-                  className="w-full rounded-lg bg-brand px-3 py-2 text-center text-xs font-semibold text-ink-inverse hover:bg-brand-deep disabled:opacity-50"
+                  className="button button-dark button-small"
+                  onClick={wallet.disconnect}
                 >
-                  {wallet.isConnecting ? "Connecting…" : "Connect Wallet"}
+                  Disconnect
                 </button>
-              </li>
+              </>
+            ) : (
+              <button
+                type="button"
+                className="button button-accent button-small"
+                disabled={wallet.isConnecting}
+                onClick={wallet.connect}
+              >
+                {wallet.isConnecting ? "Connecting…" : "Connect Wallet"}
+                <span aria-hidden="true">↗</span>
+              </button>
             )}
-          </ul>
+            {wallet.error ? (
+              <p role="alert" className="text-critical text-xs">
+                {wallet.error}
+              </p>
+            ) : null}
+          </div>
         </nav>
       ) : null}
     </header>
   );
 }
-
 export interface SectionHeadingProps {
   eyebrow?: string;
   title: string;
   description?: ReactNode;
   className?: string;
 }
-
-/** Standard section heading used across pages. */
 export function SectionHeading({
   eyebrow,
   title,
@@ -195,11 +218,13 @@ export function SectionHeading({
   className = "",
 }: SectionHeadingProps) {
   return (
-    <div className={`flex flex-col gap-1.5 ${className}`}>
+    <div className={`section-heading ${className}`}>
       {eyebrow ? <p className="ap-eyebrow">{eyebrow}</p> : null}
-      <h2 className="text-2xl font-semibold tracking-tight">{title}</h2>
+      <h2>{title}</h2>
       {description ? (
-        <p className="max-w-2xl text-sm leading-relaxed text-ink-muted">{description}</p>
+        <p className="max-w-2xl text-sm leading-relaxed text-ink-muted">
+          {description}
+        </p>
       ) : null}
     </div>
   );

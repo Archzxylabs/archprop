@@ -1,24 +1,41 @@
+import Link from "next/link";
+
 export function SiteFooter() {
   return (
-    <footer className="mt-16 border-t border-line bg-surface">
-      <div className="mx-auto grid max-w-6xl gap-6 px-5 py-10 sm:grid-cols-2">
-        <div className="flex flex-col gap-2">
-          <p className="text-sm font-semibold text-ink-strong">Archprop</p>
-          <p className="max-w-sm text-xs leading-relaxed text-ink-muted">
-            A two-sided marketplace for property-backed real-world assets. Owners
-            list assets, verifiers attest ownership and valuation, and investors
-            participate in defined economic rights.
-          </p>
-        </div>
-        <div className="flex flex-col gap-2 sm:items-end">
-          <p className="ap-eyebrow">Hackathon Demo</p>
-          <p className="max-w-sm text-xs leading-relaxed text-ink-muted">
-            Identity approval, verification, documents, mIDR balances, and
-            revenue in this environment are synthetic. This product does not
-            grant legal title, is not a security offering, and is not KYC,
-            banking, or regulatory infrastructure.
-          </p>
-        </div>
+    <footer className="site-footer">
+      <div>
+        <Link className="brand footer-brand" href="/">
+          <span className="brand-mark" aria-hidden="true">
+            <i />
+            <i />
+            <i />
+            <i />
+          </span>
+          <span>ARCHPROP</span>
+        </Link>
+        <p>
+          Real places. Defined economic rights. A clearer path to property
+          participation.
+        </p>
+        <p className="footer-disclosure">
+          Hackathon Demo — Synthetic / Simulated Data. Verification, documents,
+          identity, currency and revenue are simulated.
+        </p>
+      </div>
+      <div className="footer-links">
+        <Link href="/marketplace">Properties</Link>
+        <Link href="/owner">For owners</Link>
+        <Link href="/verifier">Verification</Link>
+        <Link href="/portfolio">Portfolio</Link>
+        <Link href="/admin">Demo operator</Link>
+      </div>
+      <div className="end-wordmark" aria-hidden="true">
+        ARCHPROP
+      </div>
+      <div className="footer-bottom">
+        <span>© 2026 ARCHPROP</span>
+        <span>ARBITRUM SEPOLIA · mIDR HAS NO REAL MONETARY VALUE</span>
+        <a href="#main-content">BACK TO TOP ↑</a>
       </div>
     </footer>
   );

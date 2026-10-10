@@ -52,7 +52,7 @@ function OperatorAction({ title, description, missing }: OperatorActionProps) {
 
 export default function AdminPage() {
   return (
-    <div className="mx-auto max-w-6xl px-4 py-10 sm:px-5">
+    <div className="ap-page mx-auto max-w-6xl px-4 py-10 sm:px-5">
       <p className="ap-eyebrow">Admin · Demo Operator</p>
       <h1 className="mt-1.5 text-3xl font-semibold tracking-tight text-ink-strong">
         Admin &amp; demo operator
