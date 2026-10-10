@@ -37,6 +37,10 @@ contract MockFeeToken is ERC20 {
         _mint(to, amount);
     }
 
+    function faucet(uint256 amount) external {
+        _mint(msg.sender, amount);
+    }
+
     function _update(address from, address to, uint256 value) internal override {
         if (from != address(0) && to != address(0) && feeBps > 0) {
             uint256 fee = (value * feeBps) / 10_000;

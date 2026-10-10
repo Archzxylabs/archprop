@@ -281,8 +281,12 @@ contract OfferingEscrow is AccessControl, ReentrancyGuard, IOfferingEscrow {
         if (o.status != OfferingStatus.FUNDED) revert InvalidOfferingStatus(o.status);
         if (o.fundsReleased) revert FundsAlreadyReleased();
 
-        o.fundsReleased = true;
+        uint256 balanceBefore = IERC20(o.paymentToken).balanceOf(o.issuerTreasury);
         IERC20(o.paymentToken).safeTransfer(o.issuerTreasury, o.raised);
+        uint256 received = IERC20(o.paymentToken).balanceOf(o.issuerTreasury) - balanceBefore;
+        if (received != o.raised) revert AmountMismatch(o.raised, received);
+
+        o.fundsReleased = true;
         registry.transitionFromEscrow(o.assetId, AssetStatus.ACTIVE);
 
         emit FundsReleased(offeringId, o.issuerTreasury, o.raised);
@@ -316,8 +320,12 @@ contract OfferingEscrow is AccessControl, ReentrancyGuard, IOfferingEscrow {
         uint256 amount = _payment[offeringId][msg.sender];
         if (amount == 0) revert NothingToClaim();
 
-        _refundClaimed[offeringId][msg.sender] = true;
+        uint256 balanceBefore = IERC20(o.paymentToken).balanceOf(msg.sender);
         IERC20(o.paymentToken).safeTransfer(msg.sender, amount);
+        uint256 received = IERC20(o.paymentToken).balanceOf(msg.sender) - balanceBefore;
+        if (received != amount) revert AmountMismatch(amount, received);
+
+        _refundClaimed[offeringId][msg.sender] = true;
 
         emit RefundClaimed(offeringId, msg.sender, amount);
     }

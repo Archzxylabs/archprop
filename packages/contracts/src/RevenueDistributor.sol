@@ -188,10 +188,14 @@ contract RevenueDistributor is AccessControl, ReentrancyGuard, IRevenueDistribut
         uint256 entitlement = (balance * e.amount) / e.totalSupply;
         if (entitlement == 0) revert NothingToClaim();
 
+        uint256 balanceBefore = IERC20(e.paymentToken).balanceOf(msg.sender);
+        IERC20(e.paymentToken).safeTransfer(msg.sender, entitlement);
+        uint256 received = IERC20(e.paymentToken).balanceOf(msg.sender) - balanceBefore;
+        if (received != entitlement) revert AmountMismatch(entitlement, received);
+
         _claimed[epochId][msg.sender] = true;
         e.claimedAmount += entitlement;
 
-        IERC20(e.paymentToken).safeTransfer(msg.sender, entitlement);
         emit RevenueClaimed(epochId, msg.sender, entitlement);
     }
 
@@ -204,14 +208,17 @@ contract RevenueDistributor is AccessControl, ReentrancyGuard, IRevenueDistribut
         if (e.closed) revert EpochClosed();
         if (block.timestamp <= e.claimDeadline) revert DeadlineNotPassed();
 
-        e.closed = true;
         uint256 dust = e.amount - e.claimedAmount;
 
-        IPropertyToken(e.propertyToken).setRevenueTransferLock(false);
-
         if (dust > 0) {
+            uint256 balanceBefore = IERC20(e.paymentToken).balanceOf(e.funder);
             IERC20(e.paymentToken).safeTransfer(e.funder, dust);
+            uint256 received = IERC20(e.paymentToken).balanceOf(e.funder) - balanceBefore;
+            if (received != dust) revert AmountMismatch(dust, received);
         }
+
+        e.closed = true;
+        IPropertyToken(e.propertyToken).setRevenueTransferLock(false);
 
         emit RevenueEpochClosed(epochId, e.funder, dust);
     }
