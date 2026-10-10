@@ -355,6 +355,45 @@ function roleHash(role: string): `0x${string}` {
   return keccak256(toBytes(role));
 }
 
+export interface BalanceDelta {
+  readonly label: string;
+  readonly account: `0x${string}`;
+  readonly before: bigint;
+  readonly after: bigint;
+  readonly delta: bigint;
+  readonly expectedDelta: bigint;
+}
+
+/**
+ * Asserts that the balance delta for an account between before and after exactly matches expectedDelta.
+ * Fails closed if expectedDelta does not match (after - before).
+ */
+export function assertBalanceDelta(
+  label: string,
+  account: `0x${string}`,
+  before: bigint,
+  after: bigint,
+  expectedDelta: bigint,
+): BalanceDelta {
+  const delta = after - before;
+  if (delta !== expectedDelta) {
+    throw new Error(
+      `[BALANCE-DELTA-MISMATCH] ${label} for account ${account}: ` +
+        `expected delta ${expectedDelta > 0n ? "+" : ""}${expectedDelta.toString()}, ` +
+        `observed ${delta > 0n ? "+" : ""}${delta.toString()} ` +
+        `(before: ${before.toString()}, after: ${after.toString()})`,
+    );
+  }
+  return {
+    label,
+    account,
+    before,
+    after,
+    delta,
+    expectedDelta,
+  };
+}
+
 export interface GoldenPathResult {
   ok: boolean;
   blockNumber: bigint;
@@ -368,6 +407,7 @@ export interface GoldenPathResult {
   };
   checksPassed: number;
   totalChecks: number;
+  observedBalanceDeltas: BalanceDelta[];
 }
 
 /**
@@ -498,6 +538,11 @@ export async function executeGoldenPath(options?: {
   ]);
 
   const asset = CANONICAL_VILLA_NUSA;
+  const observedBalanceDeltas: BalanceDelta[] = [];
+
+  function getMockIdrBalance(account: `0x${string}`): Promise<bigint> {
+    return read<bigint>(mockIdrAddress, mockIdrAbi.abi, "balanceOf", [account]);
+  }
 
   // PropertyToken constructor mints full fixed supply to OfferingEscrow (ADR-003)
   const propertyTokenAddress = await deploy("PropertyToken", tokenAbi, [
@@ -707,6 +752,10 @@ export async function executeGoldenPath(options?: {
       "approve",
       [offeringEscrowAddress, perInvestorPayment],
     );
+
+    const investorBefore = await getMockIdrBalance(investor);
+    const escrowBefore = await getMockIdrBalance(offeringEscrowAddress);
+
     await send(
       `invest (${investor})`,
       investor,
@@ -714,6 +763,35 @@ export async function executeGoldenPath(options?: {
       escrowAbi.abi,
       "invest",
       [1n, perInvestorPayment],
+    );
+
+    const investorAfter = await getMockIdrBalance(investor);
+    const escrowAfter = await getMockIdrBalance(offeringEscrowAddress);
+
+    observedBalanceDeltas.push(
+      assertBalanceDelta(
+        `Investor investment debit (${investor})`,
+        investor,
+        investorBefore,
+        investorAfter,
+        -perInvestorPayment,
+      ),
+    );
+    observedBalanceDeltas.push(
+      assertBalanceDelta(
+        `Escrow investment credit (${investor})`,
+        offeringEscrowAddress,
+        escrowBefore,
+        escrowAfter,
+        perInvestorPayment,
+      ),
+    );
+  }
+
+  const finalEscrowRaised = await getMockIdrBalance(offeringEscrowAddress);
+  if (finalEscrowRaised !== asset.target) {
+    throw new Error(
+      `Escrow MockIDR balance after full funding is ${finalEscrowRaised}, expected target ${asset.target}`,
     );
   }
 
@@ -746,6 +824,9 @@ export async function executeGoldenPath(options?: {
     }
   }
 
+  const escrowBeforeRelease = await getMockIdrBalance(offeringEscrowAddress);
+  const treasuryBeforeRelease = await getMockIdrBalance(accounts.owner);
+
   await send(
     "releaseFunds",
     accounts.admin,
@@ -754,6 +835,33 @@ export async function executeGoldenPath(options?: {
     "releaseFunds",
     [1n],
   );
+
+  const escrowAfterRelease = await getMockIdrBalance(offeringEscrowAddress);
+  const treasuryAfterRelease = await getMockIdrBalance(accounts.owner);
+
+  observedBalanceDeltas.push(
+    assertBalanceDelta(
+      "Escrow releaseFunds debit",
+      offeringEscrowAddress,
+      escrowBeforeRelease,
+      escrowAfterRelease,
+      -asset.target,
+    ),
+  );
+  observedBalanceDeltas.push(
+    assertBalanceDelta(
+      "Issuer treasury releaseFunds credit",
+      accounts.owner,
+      treasuryBeforeRelease,
+      treasuryAfterRelease,
+      asset.target,
+    ),
+  );
+
+  if (escrowAfterRelease !== 0n) {
+    throw new Error(`OfferingEscrow has non-zero MockIDR balance after releaseFunds: ${escrowAfterRelease}`);
+  }
+
   const statusActive = await read<number>(registryAddress, registryAbi.abi, "assetStatus", [
     asset.assetId,
   ]);
@@ -797,6 +905,10 @@ export async function executeGoldenPath(options?: {
     "approve",
     [revenueDistributorAddress, revenueAmount],
   );
+
+  const funderBeforePublish = await getMockIdrBalance(accounts.admin);
+  const distributorBeforePublish = await getMockIdrBalance(revenueDistributorAddress);
+
   await send(
     "publishRevenue",
     accounts.admin,
@@ -813,7 +925,38 @@ export async function executeGoldenPath(options?: {
     ],
   );
 
+  const funderAfterPublish = await getMockIdrBalance(accounts.admin);
+  const distributorAfterPublish = await getMockIdrBalance(revenueDistributorAddress);
+
+  observedBalanceDeltas.push(
+    assertBalanceDelta(
+      "Funder publishRevenue deposit debit",
+      accounts.admin,
+      funderBeforePublish,
+      funderAfterPublish,
+      -revenueAmount,
+    ),
+  );
+  observedBalanceDeltas.push(
+    assertBalanceDelta(
+      "Distributor publishRevenue deposit credit",
+      revenueDistributorAddress,
+      distributorBeforePublish,
+      distributorAfterPublish,
+      revenueAmount,
+    ),
+  );
+
+  const isLockedDuringEpoch = await read<boolean>(propertyTokenAddress, tokenAbi.abi, "revenueTransferLocked");
+  if (!isLockedDuringEpoch) {
+    throw new Error("PropertyToken revenue transfer lock must be active during open revenue epoch.");
+  }
+
+  const perInvestorRevenue = revenueAmount / 2n; // 50,000,000
   for (const investor of [accounts.investor1, accounts.investor2]) {
+    const investorBeforeClaim = await getMockIdrBalance(investor);
+    const distributorBeforeClaim = await getMockIdrBalance(revenueDistributorAddress);
+
     await send(
       `claimRevenue (${investor})`,
       investor,
@@ -822,11 +965,43 @@ export async function executeGoldenPath(options?: {
       "claimRevenue",
       [1n],
     );
+
+    const investorAfterClaim = await getMockIdrBalance(investor);
+    const distributorAfterClaim = await getMockIdrBalance(revenueDistributorAddress);
+
+    observedBalanceDeltas.push(
+      assertBalanceDelta(
+        `Investor claimRevenue credit (${investor})`,
+        investor,
+        investorBeforeClaim,
+        investorAfterClaim,
+        perInvestorRevenue,
+      ),
+    );
+    observedBalanceDeltas.push(
+      assertBalanceDelta(
+        `Distributor claimRevenue debit (${investor})`,
+        revenueDistributorAddress,
+        distributorBeforeClaim,
+        distributorAfterClaim,
+        -perInvestorRevenue,
+      ),
+    );
+  }
+
+  const distributorBalancePostClaims = await getMockIdrBalance(revenueDistributorAddress);
+  if (distributorBalancePostClaims !== 0n) {
+    throw new Error(
+      `Revenue distributor has non-zero MockIDR balance after all claims: ${distributorBalancePostClaims}`,
+    );
   }
 
   const secondsUntilDeadline = Number(claimDeadline - (await chainNow()));
   await publicClient.request({ method: "evm_increaseTime", params: [secondsUntilDeadline + 60] } as never);
   await publicClient.request({ method: "evm_mine", params: [] } as never);
+
+  const funderBeforeClose = await getMockIdrBalance(accounts.admin);
+  const distributorBeforeClose = await getMockIdrBalance(revenueDistributorAddress);
 
   await send(
     "closeRevenueEpoch",
@@ -835,6 +1010,63 @@ export async function executeGoldenPath(options?: {
     distributorAbi.abi,
     "closeRevenueEpoch",
     [1n],
+  );
+
+  const funderAfterClose = await getMockIdrBalance(accounts.admin);
+  const distributorAfterClose = await getMockIdrBalance(revenueDistributorAddress);
+
+  observedBalanceDeltas.push(
+    assertBalanceDelta(
+      "Funder balance delta on zero-dust closeRevenueEpoch",
+      accounts.admin,
+      funderBeforeClose,
+      funderAfterClose,
+      0n,
+    ),
+  );
+  observedBalanceDeltas.push(
+    assertBalanceDelta(
+      "Distributor balance delta on zero-dust closeRevenueEpoch",
+      revenueDistributorAddress,
+      distributorBeforeClose,
+      distributorAfterClose,
+      0n,
+    ),
+  );
+
+  if (distributorAfterClose !== 0n) {
+    throw new Error(`Revenue distributor has non-zero MockIDR balance after epoch close: ${distributorAfterClose}`);
+  }
+
+  const isLockedAfterClose = await read<boolean>(propertyTokenAddress, tokenAbi.abi, "revenueTransferLocked");
+  if (isLockedAfterClose) {
+    throw new Error("PropertyToken revenue transfer lock must be released after epoch close.");
+  }
+
+  // Verify token transfers are actually unlocked by executing a 1-token transfer between approved investors
+  await send(
+    "PropertyToken.transfer(investor1 -> investor2)",
+    accounts.investor1,
+    propertyTokenAddress,
+    tokenAbi.abi,
+    "transfer",
+    [accounts.investor2, 1n],
+  );
+  const bal1PostTransfer = await read<bigint>(propertyTokenAddress, tokenAbi.abi, "balanceOf", [accounts.investor1]);
+  const bal2PostTransfer = await read<bigint>(propertyTokenAddress, tokenAbi.abi, "balanceOf", [accounts.investor2]);
+  if (bal1PostTransfer !== perInvestorTokens - 1n || bal2PostTransfer !== perInvestorTokens + 1n) {
+    throw new Error(
+      `PropertyToken transfer post-unlock did not update balances as expected (inv1: ${bal1PostTransfer}, inv2: ${bal2PostTransfer})`,
+    );
+  }
+  // Transfer back to restore canonical 150,000 balances for step 8 invariant checks
+  await send(
+    "PropertyToken.transfer(investor2 -> investor1)",
+    accounts.investor2,
+    propertyTokenAddress,
+    tokenAbi.abi,
+    "transfer",
+    [accounts.investor1, 1n],
   );
 
   // --- Step 8: Validate State Invariants ---
@@ -957,6 +1189,7 @@ export async function executeGoldenPath(options?: {
     },
     checksPassed,
     totalChecks,
+    observedBalanceDeltas,
   };
 }
 
@@ -974,6 +1207,11 @@ if (process.argv[1]?.endsWith("runner.ts")) {
   executeGoldenPath()
     .then((result) => {
       console.log(`\n✓ Golden path succeeded on Anvil (${result.checksPassed}/${result.totalChecks} checks passed).`);
+      console.log(`\nObserved ${result.observedBalanceDeltas.length} exact economic balance deltas:`);
+      for (const d of result.observedBalanceDeltas) {
+        const sign = d.delta > 0n ? "+" : "";
+        console.log(`  ✓ ${d.label}: ${sign}${d.delta.toString()} mIDR (account: ${d.account})`);
+      }
       process.exit(0);
     })
     .catch((err: unknown) => {
