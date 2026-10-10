@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600" role="img" aria-label="Lombok Residence, a hillside house above the coast">
+  <defs>
+    <linearGradient id="lombok-sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffe6c7"/>
+      <stop offset="100%" stop-color="#fdf3e3"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="800" height="600" fill="url(#lombok-sky)"/>
+
+  <!-- Sun -->
+  <circle cx="620" cy="150" r="56" fill="#f6b96a" opacity=".85"/>
+
+  <!-- Volcano -->
+  <path d="M120 340L300 160l180 180z" fill="#6f7d84"/>
+  <path d="M260 210l40-50 40 50z" fill="#59656b"/>
+  <!-- Ocean beyond the hill -->
+  <rect y="340" width="800" height="80" fill="#4b93a6"/>
+  <path d="M0 340h800v10H0z" fill="#3a7c8e" opacity=".6"/>
+
+  <!-- Hillside -->
+  <path d="M0 400q220-70 420-20t380-30v250H0z" fill="#a8bd6a"/>
+  <path d="M0 460q200-56 400-16t400-24v180H0z" fill="#8ea856"/>
+
+  <!-- Residence -->
+  <g>
+    <rect x="330" y="330" width="200" height="100" fill="#fbf6ec"/>
+    <rect x="330" y="330" width="200" height="8" fill="#a9723f"/>
+    <path d="M310 330l120-46 120 46z" fill="#8a5a32"/>
+    <!-- Terrace and stilts -->
+    <rect x="340" y="382" width="180" height="6" fill="#a9723f"/>
+    <rect x="348" y="388" width="9" height="38" fill="#8a5a32"/>
+    <rect x="503" y="388" width="9" height="38" fill="#8a5a32"/>
+    <!-- Windows -->
+    <rect x="356" y="352" width="56" height="30" fill="#4d6b78"/>
+    <rect x="428" y="352" width="56" height="30" fill="#4d6b78"/>
+  </g>
+
+  <!-- Shrubs -->
+  <g fill="#5f7f42">
+    <ellipse cx="180" cy="470" rx="46" ry="24"/>
+    <ellipse cx="240" cy="486" rx="34" ry="18"/>
+    <ellipse cx="620" cy="478" rx="50" ry="26"/>
+    <ellipse cx="560" cy="494" rx="32" ry="18"/>
+  </g>
+
+  <!-- Coast -->
+  <path d="M0 560q200-26 400 0t400-8v48H0z" fill="#d9c9a4"/>
+</svg>

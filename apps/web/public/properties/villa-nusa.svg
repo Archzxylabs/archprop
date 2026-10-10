@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600" role="img" aria-label="Villa Nusa, a tropical villa in Bali">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#bfe3f0"/>
+      <stop offset="100%" stop-color="#eaf6f7"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="800" height="600" fill="url(#sky)"/>
+
+  <!-- Sea -->
+  <rect y="330" width="800" height="90" fill="#3f8fa8"/>
+  <path d="M0 330h800v14H0z" fill="#2f7a92" opacity=".5"/>
+
+  <!-- Sand -->
+  <rect y="420" width="800" height="180" fill="#e8d9b8"/>
+  <path d="M0 420q200-18 400 0t400-6v12H0z" fill="#d6c39f"/>
+
+  <!-- Distant hills -->
+  <path d="M0 340q120-58 250-10t230-16 320 26v-40H0z" fill="#7fae8a" opacity=".55"/>
+
+  <!-- Villa body -->
+  <g>
+    <rect x="250" y="250" width="300" height="130" fill="#f7f3ea"/>
+    <rect x="250" y="250" width="300" height="10" fill="#c98a4b"/>
+    <!-- Roof tiers -->
+    <path d="M230 250l170-70 170 70z" fill="#8c5a35"/>
+    <path d="M300 250l100-42 100 42z" fill="#a26b41"/>
+    <!-- Veranda posts -->
+    <rect x="270" y="300" width="12" height="80" fill="#8c5a35"/>
+    <rect x="360" y="300" width="12" height="80" fill="#8c5a35"/>
+    <rect x="450" y="300" width="12" height="80" fill="#8c5a35"/>
+    <rect x="530" y="300" width="12" height="80" fill="#8c5a35"/>
+    <!-- Doors and windows -->
+    <rect x="320" y="320" width="70" height="60" fill="#4d6b78"/>
+    <rect x="420" y="320" width="70" height="60" fill="#4d6b78"/>
+    <rect x="490" y="330" width="50" height="50" fill="#6b8b98"/>
+  </g>
+
+  <!-- Palm trees -->
+  <g fill="#4f7d52">
+    <path d="M90 420c0-60 8-100 10-120 2 20 10 60 10 120z" fill="#7a5b3a"/>
+    <path d="M100 300c-40-16-64-6-78 10 26-16 52-14 78-2z"/>
+    <path d="M100 300c40-18 66-8 80 8-26-16-54-14-80-2z"/>
+    <path d="M100 300c-30-30-30-56-24-72 8 26 22 44 40 56z"/>
+    <path d="M100 300c30-32 32-58 26-74-8 26-22 46-40 58z"/>
+    <path d="M100 300c-8-38 4-64 18-76-6 30-4 52 6 70z"/>
+    <path d="M100 300c8-40-6-66-20-78 8 30 6 54-2 72z"/>
+  </g>
+  <g fill="#4f7d52">
+    <path d="M690 420c0-52 7-88 9-106 2 18 9 54 9 106z" fill="#7a5b3a"/>
+    <path d="M699 314c-36-14-58-6-70 8 24-14 46-12 70-2z"/>
+    <path d="M699 314c36-16 60-6 72 8-24-14-48-12-72-2z"/>
+    <path d="M699 314c-28-28-28-50-22-64 8 24 20 40 36 50z"/>
+    <path d="M699 314c28-28 30-52 24-66-8 24-20 42-36 52z"/>
+  </g>
+
+  <!-- Pool -->
+  <rect x="330" y="450" width="200" height="90" rx="8" fill="#5fc0cf"/>
+  <rect x="330" y="450" width="200" height="90" rx="8" fill="none" stroke="#3f9fb0" stroke-width="4"/>
+</svg>
