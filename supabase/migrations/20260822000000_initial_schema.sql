@@ -284,7 +284,7 @@ create policy properties_select_public on public.properties
 
 drop policy if exists properties_insert_own on public.properties;
 create policy properties_insert_own on public.properties
-  for insert to authenticated with check (owner_user_id = auth.uid());
+  for insert to authenticated with check (owner_user_id = auth.uid() and status_cache = 'DRAFT');
 
 drop policy if exists properties_update_own on public.properties;
 create policy properties_update_own on public.properties
@@ -296,7 +296,11 @@ drop policy if exists properties_delete_own on public.properties;
 create policy properties_delete_own on public.properties
   for delete to authenticated using (owner_user_id = auth.uid());
 
--- ---- property_documents (private evidence: owner only) ---------------------
+-- ---- property_documents (private evidence: owner read; service-role write) ---
+-- Neither anon nor authenticated receives INSERT, UPDATE, or DELETE policies.
+-- Direct client calls must never create or alter purported evidence.
+-- Document ingestion, validation, hashing, and storage are performed strictly
+-- server-side via the service role in POST /api/properties/:id/documents.
 
 create or replace function public.owns_property(target_property_id uuid)
 returns boolean
@@ -322,13 +326,8 @@ create policy property_documents_select_owner on public.property_documents
   for select to authenticated using (public.owns_property(property_id));
 
 drop policy if exists property_documents_insert_owner on public.property_documents;
-create policy property_documents_insert_owner on public.property_documents
-  for insert to authenticated
-  with check (public.owns_property(property_id) and uploaded_by = auth.uid());
-
+drop policy if exists property_documents_update_owner on public.property_documents;
 drop policy if exists property_documents_delete_owner on public.property_documents;
-create policy property_documents_delete_owner on public.property_documents
-  for delete to authenticated using (public.owns_property(property_id));
 
 -- ---- property_images (public marketplace media) ----------------------------
 
@@ -414,11 +413,13 @@ begin
     ) on public.properties to authenticated;
 
     -- Property creation by authenticated owners. Grants only the exact columns
-    -- inserted by POST /api/properties. RLS enforces owner_user_id = auth.uid().
+    -- inserted by POST /api/properties. `status_cache` is withheld from client
+    -- INSERT to prevent forging lifecycle state; the DB default sets 'DRAFT'.
+    -- RLS enforces owner_user_id = auth.uid() and status_cache = 'DRAFT'.
     grant insert (
       owner_user_id, external_id, name, slug, property_type, location,
       issuer_name, description, indicative_value, offering_target, token_supply,
-      token_price, economic_rights_bps, status_cache
+      token_price, economic_rights_bps
     ) on public.properties to authenticated;
 
     -- Users table: authenticated callers may only SELECT their own mirror row.
@@ -432,7 +433,11 @@ begin
     -- (anon and authenticated) are strictly withheld to close write-bypass vulnerabilities.
     grant select on public.chain_transactions to authenticated;
     grant select on public.revenue_epochs to authenticated;
-    grant select, insert, delete on public.property_documents to authenticated;
+
+    -- Private evidence table: owner read-only via public.owns_property RLS.
+    -- Direct client INSERT, UPDATE, and DELETE are strictly withheld; document
+    -- records are created exclusively server-side after full validation.
+    grant select on public.property_documents to authenticated;
   end if;
 end
 $$;
@@ -523,36 +528,8 @@ create policy property_documents_storage_select on storage.objects
   );
 
 drop policy if exists property_documents_storage_insert on storage.objects;
-create policy property_documents_storage_insert on storage.objects
-  for insert to authenticated
-  with check (
-    bucket_id = 'property-documents'
-    and public.storage_property_id(name) is not null
-    and public.owns_property(public.storage_property_id(name))
-  );
-
 drop policy if exists property_documents_storage_update on storage.objects;
-create policy property_documents_storage_update on storage.objects
-  for update to authenticated
-  using (
-    bucket_id = 'property-documents'
-    and public.storage_property_id(name) is not null
-    and public.owns_property(public.storage_property_id(name))
-  )
-  with check (
-    bucket_id = 'property-documents'
-    and public.storage_property_id(name) is not null
-    and public.owns_property(public.storage_property_id(name))
-  );
-
 drop policy if exists property_documents_storage_delete on storage.objects;
-create policy property_documents_storage_delete on storage.objects
-  for delete to authenticated
-  using (
-    bucket_id = 'property-documents'
-    and public.storage_property_id(name) is not null
-    and public.owns_property(public.storage_property_id(name))
-  );
 
 -- ---- public bucket: everyone reads, owners write ---------------------------
 
