@@ -328,24 +328,31 @@ create policy property_images_delete_owner on public.property_images
   for delete to authenticated using (public.owns_property(property_id));
 
 -- ---- chain_transactions (public cache of on-chain events) ------------------
+-- The blockchain is authoritative for transactions and economic events.
+-- Neither anon nor authenticated may directly create, update, or delete cache entries.
+-- Writes are performed exclusively by server-side service role upon verified on-chain events.
 
 drop policy if exists chain_transactions_select_public on public.chain_transactions;
 create policy chain_transactions_select_public on public.chain_transactions
   for select to anon, authenticated using (true);
 
 drop policy if exists chain_transactions_insert_owner on public.chain_transactions;
-create policy chain_transactions_insert_owner on public.chain_transactions
-  for insert to authenticated with check (public.owns_property(property_id));
+drop policy if exists chain_transactions_update_owner on public.chain_transactions;
+drop policy if exists chain_transactions_delete_owner on public.chain_transactions;
 
 -- ---- revenue_epochs (public cache of published epochs) ---------------------
+-- The blockchain is authoritative for revenue epochs.
+-- Neither anon nor authenticated may directly create, update, or delete cache entries.
+-- Writes are performed exclusively by server-side service role in POST /api/demo/revenue
+-- after verifying receipt, chain ID, matching distributor event, and owner authorization.
 
 drop policy if exists revenue_epochs_select_public on public.revenue_epochs;
 create policy revenue_epochs_select_public on public.revenue_epochs
   for select to anon, authenticated using (true);
 
 drop policy if exists revenue_epochs_insert_owner on public.revenue_epochs;
-create policy revenue_epochs_insert_owner on public.revenue_epochs
-  for insert to authenticated with check (public.owns_property(property_id));
+drop policy if exists revenue_epochs_update_owner on public.revenue_epochs;
+drop policy if exists revenue_epochs_delete_owner on public.revenue_epochs;
 
 -- ---------------------------------------------------------------------------
 -- 9. Column-level grants (least privilege; RLS alone cannot hide a column)
@@ -402,8 +409,12 @@ begin
     -- INSERT, UPDATE, and DELETE are strictly withheld.
     grant select on public.users to authenticated;
     grant select, insert, update, delete on public.property_images to authenticated;
-    grant select, insert on public.chain_transactions to authenticated;
-    grant select, insert on public.revenue_epochs to authenticated;
+
+    -- On-chain transaction and revenue cache tables: public presentation only.
+    -- Blockchain is authoritative; direct INSERT, UPDATE, and DELETE by client roles
+    -- (anon and authenticated) are strictly withheld to close write-bypass vulnerabilities.
+    grant select on public.chain_transactions to authenticated;
+    grant select on public.revenue_epochs to authenticated;
     grant select, insert, delete on public.property_documents to authenticated;
   end if;
 end

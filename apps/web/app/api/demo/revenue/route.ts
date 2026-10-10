@@ -161,10 +161,11 @@ export async function POST(request: NextRequest) {
   }
 
   // ---- Record the reference ----------------------------------------------
-  // The insert runs through the service client because the caller's own
-  // insert policy covers property rows they own, and this write is scoped by
-  // the ownership check above. chain_epoch_id is taken from the decoded log,
-  // never from the request.
+  // The insert runs through the server service client because client roles
+  // (anon and authenticated) have no INSERT privilege on revenue_epochs to
+  // prevent cache spoofing. This write is strictly authorized by the ownership
+  // check, chain ID 421614 verification, valid receipt, and matching event log.
+  // chain_epoch_id is taken from the decoded log, never from the request.
 
   // Pre-check on the constraint that actually exists: one epoch per
   // (property, period). Checking chain_tx_hash here would miss a repeat

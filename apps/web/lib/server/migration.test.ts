@@ -220,6 +220,82 @@ describe("Migration DDL privilege regression tests (Static Schema Analysis)", ()
     });
   });
 
+  describe("on-chain transaction and revenue cache tables privileges and policies", () => {
+    it("grants only SELECT on public.chain_transactions and public.revenue_epochs to anon", () => {
+      expect(sql).toMatch(/grant\s+select\s+on\s+public\.chain_transactions\s+to\s+anon;/i);
+      expect(sql).toMatch(/grant\s+select\s+on\s+public\.revenue_epochs\s+to\s+anon;/i);
+
+      // anon must NOT receive insert, update, delete, or all
+      expect(sql).not.toMatch(
+        /grant\s+[^;]*\b(insert|update|delete|all)\b[^;]*\bon\s+public\.chain_transactions\s+to\s+anon\b/i,
+      );
+      expect(sql).not.toMatch(
+        /grant\s+[^;]*\b(insert|update|delete|all)\b[^;]*\bon\s+public\.revenue_epochs\s+to\s+anon\b/i,
+      );
+    });
+
+    it("grants only SELECT on public.chain_transactions and public.revenue_epochs to authenticated", () => {
+      expect(sql).toMatch(/grant\s+select\s+on\s+public\.chain_transactions\s+to\s+authenticated;/i);
+      expect(sql).toMatch(/grant\s+select\s+on\s+public\.revenue_epochs\s+to\s+authenticated;/i);
+
+      // authenticated must NOT receive insert, update, delete, or all
+      expect(sql).not.toMatch(
+        /grant\s+[^;]*\b(insert|update|delete|all)\b[^;]*\bon\s+public\.chain_transactions\s+to\s+authenticated\b/i,
+      );
+      expect(sql).not.toMatch(
+        /grant\s+[^;]*\b(insert|update|delete|all)\b[^;]*\bon\s+public\.revenue_epochs\s+to\s+authenticated\b/i,
+      );
+    });
+
+    it("revokes all prior privileges on cache tables before granting selective access", () => {
+      expect(sql).toMatch(/revoke\s+all\s+on\s+public\.chain_transactions\s+from\s+anon;/i);
+      expect(sql).toMatch(/revoke\s+all\s+on\s+public\.revenue_epochs\s+from\s+anon;/i);
+      expect(sql).toMatch(/revoke\s+all\s+on\s+public\.chain_transactions\s+from\s+authenticated;/i);
+      expect(sql).toMatch(/revoke\s+all\s+on\s+public\.revenue_epochs\s+from\s+authenticated;/i);
+    });
+
+    it("does not create any direct INSERT, UPDATE, or DELETE RLS policies on cache tables", () => {
+      expect(sql).not.toMatch(/create\s+policy\s+chain_transactions_insert/i);
+      expect(sql).not.toMatch(/create\s+policy\s+chain_transactions_update/i);
+      expect(sql).not.toMatch(/create\s+policy\s+chain_transactions_delete/i);
+
+      expect(sql).not.toMatch(/create\s+policy\s+revenue_epochs_insert/i);
+      expect(sql).not.toMatch(/create\s+policy\s+revenue_epochs_update/i);
+      expect(sql).not.toMatch(/create\s+policy\s+revenue_epochs_delete/i);
+    });
+
+    it("idempotently drops stale INSERT, UPDATE, and DELETE policies on cache tables", () => {
+      expect(sql).toMatch(
+        /drop\s+policy\s+if\s+exists\s+chain_transactions_insert_owner\s+on\s+public\.chain_transactions;/i,
+      );
+      expect(sql).toMatch(
+        /drop\s+policy\s+if\s+exists\s+chain_transactions_update_owner\s+on\s+public\.chain_transactions;/i,
+      );
+      expect(sql).toMatch(
+        /drop\s+policy\s+if\s+exists\s+chain_transactions_delete_owner\s+on\s+public\.chain_transactions;/i,
+      );
+
+      expect(sql).toMatch(
+        /drop\s+policy\s+if\s+exists\s+revenue_epochs_insert_owner\s+on\s+public\.revenue_epochs;/i,
+      );
+      expect(sql).toMatch(
+        /drop\s+policy\s+if\s+exists\s+revenue_epochs_update_owner\s+on\s+public\.revenue_epochs;/i,
+      );
+      expect(sql).toMatch(
+        /drop\s+policy\s+if\s+exists\s+revenue_epochs_delete_owner\s+on\s+public\.revenue_epochs;/i,
+      );
+    });
+
+    it("maintains public SELECT policies for chain_transactions and revenue_epochs", () => {
+      expect(sql).toMatch(
+        /create\s+policy\s+chain_transactions_select_public\s+on\s+public\.chain_transactions\s+for\s+select\s+to\s+anon,\s*authenticated\s+using\s*\(\s*true\s*\);/i,
+      );
+      expect(sql).toMatch(
+        /create\s+policy\s+revenue_epochs_select_public\s+on\s+public\.revenue_epochs\s+for\s+select\s+to\s+anon,\s*authenticated\s+using\s*\(\s*true\s*\);/i,
+      );
+    });
+  });
+
   describe("Distinction between static and live integration tests", () => {
     it("reports verification mode clearly", () => {
       const liveDbConfigured = Boolean(

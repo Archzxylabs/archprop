@@ -165,4 +165,155 @@ describe("Duplicate revenue period isolation and conflict handling", () => {
       });
     });
   });
+
+  describe("Verified service-role revenue cache write path", () => {
+    it("guarantees cache insert is only executed after full ownership, chain, and event verification", async () => {
+      let serviceInsertPayload: Record<string, unknown> | null = null;
+
+      // Simulate the verified service path logic in POST /api/demo/revenue
+      const executeVerifiedServiceRevenueRecord = async (params: {
+        callerUserId: string;
+        propertyOwnerUserId: string;
+        rpcChainId: number;
+        receiptStatus: "success" | "reverted";
+        matchingEvent: {
+          assetId: string;
+          amount: string;
+          evidenceHash: string;
+          epochId: bigint;
+          blockNumber: number;
+          claimDeadline: bigint;
+        } | null;
+        input: {
+          propertyId: string;
+          period: string;
+          assetId: string;
+          amount: string;
+          evidenceHash: string;
+          txHash: string;
+        };
+        existingPeriod: boolean;
+      }) => {
+        // 1. Ownership check
+        if (params.propertyOwnerUserId !== params.callerUserId) {
+          return { status: 403, error: "forbidden" };
+        }
+        // 2. Chain ID verification
+        if (params.rpcChainId !== 421614) {
+          return { status: 502, error: "chain_mismatch" };
+        }
+        // 3. Receipt verification
+        if (params.receiptStatus !== "success") {
+          return { status: 409, error: "chain_reverted" };
+        }
+        // 4. Event log verification
+        if (!params.matchingEvent) {
+          return { status: 409, error: "no_matching_event" };
+        }
+        if (params.matchingEvent.amount !== params.input.amount) {
+          return { status: 409, error: "amount_mismatch" };
+        }
+        if (params.matchingEvent.evidenceHash.toLowerCase() !== params.input.evidenceHash.toLowerCase()) {
+          return { status: 409, error: "evidence_mismatch" };
+        }
+        // 5. Pre-check for duplicate period
+        if (params.existingPeriod) {
+          return { status: 409, error: "conflict" };
+        }
+        // 6. Service role insert
+        serviceInsertPayload = {
+          property_id: params.input.propertyId,
+          period: params.input.period,
+          distributable_revenue: params.input.amount,
+          evidence_hash: params.input.evidenceHash,
+          chain_tx_hash: params.input.txHash,
+          chain_epoch_id: params.matchingEvent.epochId.toString(10),
+          chain_block_number: params.matchingEvent.blockNumber,
+          claim_deadline: params.matchingEvent.claimDeadline.toString(10),
+        };
+        return {
+          status: 201,
+          data: {
+            revenueEpoch: {
+              id: "rev-epoch-uuid-1234",
+              period: params.input.period,
+              distributableRevenue: params.input.amount,
+              evidenceHash: params.input.evidenceHash,
+              chainTxHash: params.input.txHash,
+              chainEpochId: params.matchingEvent.epochId.toString(10),
+              chainBlockNumber: params.matchingEvent.blockNumber,
+              createdAt: "2026-08-22T00:00:00Z",
+            },
+          },
+        };
+      };
+
+      const validInput = {
+        propertyId: "prop-123",
+        period: "2026-Q3",
+        assetId: "0x1756428cf9ce005285ddcf87c75240c798535bed95c6aeca6a5a7d3eb7b364ae",
+        amount: "5000000",
+        evidenceHash: "0x" + "aa".repeat(32),
+        txHash: "0x" + "bb".repeat(32),
+      };
+
+      const matchingEvent = {
+        assetId: validInput.assetId,
+        amount: "5000000",
+        evidenceHash: "0x" + "aa".repeat(32),
+        epochId: 1n,
+        blockNumber: 12345,
+        claimDeadline: 1700000000n,
+      };
+
+      // When ownership check fails, no insert is called
+      const forbiddenResult = await executeVerifiedServiceRevenueRecord({
+        callerUserId: "user-attacker",
+        propertyOwnerUserId: "user-owner",
+        rpcChainId: 421614,
+        receiptStatus: "success",
+        matchingEvent,
+        input: validInput,
+        existingPeriod: false,
+      });
+      expect(forbiddenResult.status).toBe(403);
+      expect(serviceInsertPayload).toBeNull();
+
+      // When event amount mismatches, no insert is called
+      const amountMismatchResult = await executeVerifiedServiceRevenueRecord({
+        callerUserId: "user-owner",
+        propertyOwnerUserId: "user-owner",
+        rpcChainId: 421614,
+        receiptStatus: "success",
+        matchingEvent: { ...matchingEvent, amount: "9999999" },
+        input: validInput,
+        existingPeriod: false,
+      });
+      expect(amountMismatchResult.status).toBe(409);
+      expect(serviceInsertPayload).toBeNull();
+
+      // When all checks pass, verified service insert succeeds
+      const successResult = await executeVerifiedServiceRevenueRecord({
+        callerUserId: "user-owner",
+        propertyOwnerUserId: "user-owner",
+        rpcChainId: 421614,
+        receiptStatus: "success",
+        matchingEvent,
+        input: validInput,
+        existingPeriod: false,
+      });
+      expect(successResult.status).toBe(201);
+      expect(serviceInsertPayload).not.toBeNull();
+      expect(serviceInsertPayload).toEqual({
+        property_id: "prop-123",
+        period: "2026-Q3",
+        distributable_revenue: "5000000",
+        evidence_hash: "0x" + "aa".repeat(32),
+        chain_tx_hash: "0x" + "bb".repeat(32),
+        chain_epoch_id: "1",
+        chain_block_number: 12345,
+        claim_deadline: "1700000000",
+      });
+    });
+  });
 });

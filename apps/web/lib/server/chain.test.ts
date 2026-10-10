@@ -89,8 +89,6 @@ describe("fetchVerifiedReceipt", () => {
 });
 
 describe("decodeRevenuePublishedLogs", () => {
-  
-
   it("decodes a matching log from the configured distributor", () => {
     const logs = [
       buildLog({ epochId: 7n, assetId: ASSET_ID, amount: 5_000n, evidenceHash: EVIDENCE_HASH, claimDeadline: 1n }),
