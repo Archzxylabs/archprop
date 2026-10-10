@@ -65,6 +65,40 @@ describe("PropertyDetailsForm component", () => {
     expect(html).toContain("a connected owner wallet on Arbitrum Sepolia");
   });
 
+  it("keeps the live invariant verification unsatisfied and shows warnings for non-canonical or mismatched values", () => {
+    const htmlWithCommas = renderToStaticMarkup(
+      <PropertyDetailsForm initialValues={{ offeringTarget: "3,000,000,000" }} />,
+    );
+    expect(htmlWithCommas).not.toContain("Invariant Satisfied");
+    expect(htmlWithCommas).toContain("⚠ Invariant Check:");
+    expect(htmlWithCommas).toContain("Offering target must be a canonical unsigned base-10 integer string");
+
+    const htmlWithLeadingSpace = renderToStaticMarkup(
+      <PropertyDetailsForm initialValues={{ tokenSupply: " 300000" }} />,
+    );
+    expect(htmlWithLeadingSpace).not.toContain("Invariant Satisfied");
+    expect(htmlWithLeadingSpace).toContain("Token supply must be a positive canonical unsigned base-10 integer string");
+
+    const htmlMismatched = renderToStaticMarkup(
+      <PropertyDetailsForm initialValues={{ offeringTarget: "4000000000" }} />,
+    );
+    expect(htmlMismatched).not.toContain("Invariant Satisfied");
+    expect(htmlMismatched).toContain("does not match offering target");
+  });
+
+  it("visibly displays invalid state for malformed economic rights BPS inputs (3000abc, 3.5, empty, out of range)", () => {
+    const malformedBpsList = ["3000abc", "3.5", "", "0", "10001"];
+    for (const bps of malformedBpsList) {
+      const html = renderToStaticMarkup(
+        <PropertyDetailsForm initialValues={{ economicRightsBps: bps }} />,
+      );
+      expect(html, `expected ${bps} to have aria-invalid="true"`).toContain('id="economicRightsBps"');
+      expect(html, `expected ${bps} to have aria-invalid="true"`).toMatch(/id="economicRightsBps"[^>]*aria-invalid="true"/);
+      expect(html, `expected ${bps} to have economicRightsBps-error`).toContain('id="economicRightsBps-error"');
+      expect(html).not.toContain("30% participation");
+    }
+  });
+
   it("renders legal title disclaimer and no h1 tags", () => {
     const html = renderToStaticMarkup(<PropertyDetailsForm />);
 

@@ -303,40 +303,112 @@ export function truncateHash(value: string | null | undefined, lead = 10, tail =
   return `${value.slice(0, lead)}…${value.slice(-tail)}`;
 }
 
-/**
- * Normalizes numeric input by stripping whitespace, commas, thin-spaces, and underscores.
- */
-export function normalizeDecimalString(value: string): string {
-  return value.replace(/[\s,\u202F_]/g, "");
-}
+/** Upper bound shared by uint256 in Solidity and schema validation. */
+export const UINT256_MAX = (1n << 256n) - 1n;
+
+/** Matches a canonical unsigned base-10 integer: optional single leading zero. */
+export const UNSIGNED_INT_PATTERN = /^(0|[1-9][0-9]*)$/;
 
 /**
- * Validates whether a string is a canonical unsigned base-10 integer string.
+ * Validates whether a value is a canonical unsigned base-10 integer string that fits within uint256.
  *
- * Per ADR-008 and frozen interfaces: unsigned base-10 strings with no signs,
- * no decimals, no scientific notation, and no leading zeros (except "0" itself).
+ * Per ADR-008 and frozen interfaces: exact unsigned base-10 strings with no signs,
+ * no decimals, no separators, no scientific notation, and no leading zeros (except "0" itself).
+ * Values exceeding uint256 are rejected.
  */
-export function isCanonicalUnsignedDecimal(value: string): boolean {
-  return /^(?:0|[1-9]\d*)$/.test(value);
+export function isCanonicalUnsignedDecimal(value: unknown): value is string {
+  if (typeof value !== "string" || !UNSIGNED_INT_PATTERN.test(value)) {
+    return false;
+  }
+  try {
+    const parsed = BigInt(value);
+    return parsed <= UINT256_MAX;
+  } catch {
+    return false;
+  }
 }
 
 /**
  * Parses a canonical unsigned base-10 string into a `bigint`, or returns `null`
- * if the string is non-canonical.
+ * if the string is non-canonical or exceeds uint256.
  */
-export function parseCanonicalUnsignedDecimal(value: string): bigint | null {
+export function parseCanonicalUnsignedDecimal(value: unknown): bigint | null {
   if (!isCanonicalUnsignedDecimal(value)) {
     return null;
   }
   try {
-    return BigInt(value);
+    const parsed = BigInt(value);
+    return parsed <= UINT256_MAX ? parsed : null;
   } catch {
     return null;
   }
 }
 
 /**
- * Validates that both supply and unit price are strictly positive integers (> 0).
+ * Validates economic rights basis points: must strictly represent an integer in 1..10000.
+ * Rejects partial strings (e.g. "3000abc"), decimals ("3.5"), empty string, signs, and out-of-range values.
+ */
+export function validateEconomicRightsBps(value: unknown): {
+  isValid: boolean;
+  bps: number | null;
+  error: string | null;
+} {
+  if (value === undefined || value === null || value === "") {
+    return {
+      isValid: false,
+      bps: null,
+      error: "Economic rights must be an integer between 1 and 10,000 basis points (1–100%).",
+    };
+  }
+
+  if (typeof value === "string") {
+    if (!/^[1-9][0-9]*$/.test(value)) {
+      return {
+        isValid: false,
+        bps: null,
+        error: "Economic rights must be a whole number of basis points without decimals or characters.",
+      };
+    }
+    const num = Number(value);
+    if (!Number.isSafeInteger(num) || num < 1 || num > 10_000) {
+      return {
+        isValid: false,
+        bps: null,
+        error: "Economic rights must be between 1 and 10,000 basis points (1–100%).",
+      };
+    }
+    return {
+      isValid: true,
+      bps: num,
+      error: null,
+    };
+  }
+
+  if (typeof value === "number") {
+    if (!Number.isInteger(value) || value < 1 || value > 10_000) {
+      return {
+        isValid: false,
+        bps: null,
+        error: "Economic rights must be an integer between 1 and 10,000 basis points (1–100%).",
+      };
+    }
+    return {
+      isValid: true,
+      bps: value,
+      error: null,
+    };
+  }
+
+  return {
+    isValid: false,
+    bps: null,
+    error: "Economic rights must be an integer between 1 and 10,000 basis points (1–100%).",
+  };
+}
+
+/**
+ * Validates that both supply and unit price are strictly positive integers (> 0) fitting uint256.
+ * String inputs must be exact canonical base-10 strings without separators or signs.
  */
 export function isPositiveSupplyAndPrice(
   supply: bigint | number | string,
@@ -344,7 +416,7 @@ export function isPositiveSupplyAndPrice(
 ): boolean {
   const s =
     typeof supply === "string"
-      ? parseCanonicalUnsignedDecimal(normalizeDecimalString(supply))
+      ? parseCanonicalUnsignedDecimal(supply)
       : typeof supply === "number"
         ? supply > 0 && Number.isInteger(supply)
           ? BigInt(supply)
@@ -353,20 +425,20 @@ export function isPositiveSupplyAndPrice(
 
   const p =
     typeof price === "string"
-      ? parseCanonicalUnsignedDecimal(normalizeDecimalString(price))
+      ? parseCanonicalUnsignedDecimal(price)
       : typeof price === "number"
         ? price > 0 && Number.isInteger(price)
           ? BigInt(price)
           : null
         : price;
 
-  return s !== null && p !== null && s > 0n && p > 0n;
+  return s !== null && p !== null && s > 0n && p > 0n && s <= UINT256_MAX && p <= UINT256_MAX;
 }
 
 /**
  * Validates the core offering invariant: `target == supply * price`.
- *
  * Both mIDR and token units have 0 decimals, so this check is exact.
+ * String inputs must be exact canonical base-10 strings without separators or signs.
  */
 export function validateTargetSupplyPriceInvariant(
   target: bigint | number | string,
@@ -375,7 +447,7 @@ export function validateTargetSupplyPriceInvariant(
 ): boolean {
   const t =
     typeof target === "string"
-      ? parseCanonicalUnsignedDecimal(normalizeDecimalString(target))
+      ? parseCanonicalUnsignedDecimal(target)
       : typeof target === "number"
         ? target >= 0 && Number.isInteger(target)
           ? BigInt(target)
@@ -384,7 +456,7 @@ export function validateTargetSupplyPriceInvariant(
 
   const s =
     typeof supply === "string"
-      ? parseCanonicalUnsignedDecimal(normalizeDecimalString(supply))
+      ? parseCanonicalUnsignedDecimal(supply)
       : typeof supply === "number"
         ? supply >= 0 && Number.isInteger(supply)
           ? BigInt(supply)
@@ -393,7 +465,7 @@ export function validateTargetSupplyPriceInvariant(
 
   const p =
     typeof price === "string"
-      ? parseCanonicalUnsignedDecimal(normalizeDecimalString(price))
+      ? parseCanonicalUnsignedDecimal(price)
       : typeof price === "number"
         ? price >= 0 && Number.isInteger(price)
           ? BigInt(price)
@@ -406,38 +478,52 @@ export function validateTargetSupplyPriceInvariant(
   if (s <= 0n || p <= 0n || t <= 0n) {
     return false;
   }
+  if (t > UINT256_MAX || s > UINT256_MAX || p > UINT256_MAX) {
+    return false;
+  }
   return s * p === t;
 }
 
 /**
  * Validates whether an investment amount in mIDR is cleanly divisible by token price.
  *
- * Because property tokens use 0 decimals, investors can only purchase whole tokens:
- * `paymentAmount % tokenPrice == 0`.
+ * Accepts either canonical base-10 digits or standard unambiguous comma grouping (e.g. 1,000,000).
+ * Arbitrary separators or malformed groupings are rejected. Values are bounded to uint256.
  */
 export function isInvestmentAmountDivisible(
   paymentAmount: bigint | number | string,
   tokenPrice: bigint | number | string,
 ): boolean {
-  const amount =
-    typeof paymentAmount === "string"
-      ? parseCanonicalUnsignedDecimal(normalizeDecimalString(paymentAmount))
-      : typeof paymentAmount === "number"
-        ? paymentAmount > 0 && Number.isInteger(paymentAmount)
-          ? BigInt(paymentAmount)
-          : null
-        : paymentAmount;
+  let amount: bigint | null = null;
+  if (typeof paymentAmount === "string") {
+    if (UNSIGNED_INT_PATTERN.test(paymentAmount)) {
+      amount = parseCanonicalUnsignedDecimal(paymentAmount);
+    } else if (/^[1-9][0-9]{0,2}(,[0-9]{3})+$/.test(paymentAmount)) {
+      amount = parseCanonicalUnsignedDecimal(paymentAmount.replaceAll(",", ""));
+    }
+  } else if (typeof paymentAmount === "number") {
+    amount = paymentAmount > 0 && Number.isInteger(paymentAmount) ? BigInt(paymentAmount) : null;
+  } else {
+    amount = paymentAmount;
+  }
 
-  const price =
-    typeof tokenPrice === "string"
-      ? parseCanonicalUnsignedDecimal(normalizeDecimalString(tokenPrice))
-      : typeof tokenPrice === "number"
-        ? tokenPrice > 0 && Number.isInteger(tokenPrice)
-          ? BigInt(tokenPrice)
-          : null
-        : tokenPrice;
+  let price: bigint | null = null;
+  if (typeof tokenPrice === "string") {
+    if (UNSIGNED_INT_PATTERN.test(tokenPrice)) {
+      price = parseCanonicalUnsignedDecimal(tokenPrice);
+    } else if (/^[1-9][0-9]{0,2}(,[0-9]{3})+$/.test(tokenPrice)) {
+      price = parseCanonicalUnsignedDecimal(tokenPrice.replaceAll(",", ""));
+    }
+  } else if (typeof tokenPrice === "number") {
+    price = tokenPrice > 0 && Number.isInteger(tokenPrice) ? BigInt(tokenPrice) : null;
+  } else {
+    price = tokenPrice;
+  }
 
   if (amount === null || price === null || amount <= 0n || price <= 0n) {
+    return false;
+  }
+  if (amount > UINT256_MAX || price > UINT256_MAX) {
     return false;
   }
   return amount % price === 0n;
@@ -454,19 +540,29 @@ export function calculateTokenAllocation(
   if (!isInvestmentAmountDivisible(paymentAmount, tokenPrice)) {
     return null;
   }
-  const amount =
-    typeof paymentAmount === "string"
-      ? parseCanonicalUnsignedDecimal(normalizeDecimalString(paymentAmount))!
-      : typeof paymentAmount === "number"
-        ? BigInt(paymentAmount)
-        : paymentAmount;
+  let amount: bigint;
+  if (typeof paymentAmount === "string") {
+    const raw = UNSIGNED_INT_PATTERN.test(paymentAmount)
+      ? paymentAmount
+      : paymentAmount.replaceAll(",", "");
+    amount = parseCanonicalUnsignedDecimal(raw)!;
+  } else if (typeof paymentAmount === "number") {
+    amount = BigInt(paymentAmount);
+  } else {
+    amount = paymentAmount;
+  }
 
-  const price =
-    typeof tokenPrice === "string"
-      ? parseCanonicalUnsignedDecimal(normalizeDecimalString(tokenPrice))!
-      : typeof tokenPrice === "number"
-        ? BigInt(tokenPrice)
-        : tokenPrice;
+  let price: bigint;
+  if (typeof tokenPrice === "string") {
+    const raw = UNSIGNED_INT_PATTERN.test(tokenPrice)
+      ? tokenPrice
+      : tokenPrice.replaceAll(",", "");
+    price = parseCanonicalUnsignedDecimal(raw)!;
+  } else if (typeof tokenPrice === "number") {
+    price = BigInt(tokenPrice);
+  } else {
+    price = tokenPrice;
+  }
 
   return amount / price;
 }
@@ -492,6 +588,8 @@ export interface InvestmentValidationResult {
 
 /**
  * Validates investment input according to frozen protocol rules and whole-unit model.
+ * Accepts exact canonical digits or standard unambiguous comma grouping.
+ * Bounds all values to uint256.
  */
 export function validateInvestmentInput(params: {
   rawAmount: string;
@@ -526,38 +624,68 @@ export function validateInvestmentInput(params: {
     };
   }
 
-  if (trimmed.startsWith("-")) {
+  if (trimmed.startsWith("-") || trimmed.startsWith("+")) {
     return {
       isValid: false,
       rawAmount,
       normalizedAmount: trimmed,
       amountBigInt: null,
       allocationTokens: null,
-      errorMessage: "Investment amount must be greater than zero.",
+      errorMessage: "Investment amount must be a positive number without signs.",
       errorCode: "NEGATIVE",
     };
   }
 
-  const normalized = normalizeDecimalString(trimmed);
-  if (!isCanonicalUnsignedDecimal(normalized)) {
+  const isCanonical = UNSIGNED_INT_PATTERN.test(trimmed);
+  const isFormatted = /^[1-9][0-9]{0,2}(,[0-9]{3})+$/.test(trimmed);
+
+  if (!isCanonical && !isFormatted) {
     return {
       isValid: false,
       rawAmount,
-      normalizedAmount: normalized,
+      normalizedAmount: trimmed,
       amountBigInt: null,
       allocationTokens: null,
       errorMessage:
-        "Please enter a valid whole-number amount without letters or special characters.",
+        "Please enter a valid whole-number amount (e.g. 1000000 or 1,000,000).",
       errorCode: "MALFORMED",
     };
   }
 
-  const amountBigInt = BigInt(normalized);
+  const canonicalDigits = isCanonical ? trimmed : trimmed.replaceAll(",", "");
+
+  let amountBigInt: bigint;
+  try {
+    amountBigInt = BigInt(canonicalDigits);
+  } catch {
+    return {
+      isValid: false,
+      rawAmount,
+      normalizedAmount: canonicalDigits,
+      amountBigInt: null,
+      allocationTokens: null,
+      errorMessage: "Please enter a valid whole-number amount.",
+      errorCode: "MALFORMED",
+    };
+  }
+
+  if (amountBigInt > UINT256_MAX) {
+    return {
+      isValid: false,
+      rawAmount,
+      normalizedAmount: canonicalDigits,
+      amountBigInt: null,
+      allocationTokens: null,
+      errorMessage: "Amount exceeds maximum 256-bit unsigned integer.",
+      errorCode: "OVER_CAP",
+    };
+  }
+
   if (amountBigInt === 0n) {
     return {
       isValid: false,
       rawAmount,
-      normalizedAmount: normalized,
+      normalizedAmount: canonicalDigits,
       amountBigInt: 0n,
       allocationTokens: null,
       errorMessage: "Investment amount must be greater than zero.",
@@ -565,14 +693,14 @@ export function validateInvestmentInput(params: {
     };
   }
 
-  if (tokenPrice <= 0n) {
+  if (tokenPrice <= 0n || tokenPrice > UINT256_MAX) {
     return {
       isValid: false,
       rawAmount,
-      normalizedAmount: normalized,
+      normalizedAmount: canonicalDigits,
       amountBigInt,
       allocationTokens: null,
-      errorMessage: "Token price must be a positive amount.",
+      errorMessage: "Token price must be a positive amount within uint256.",
       errorCode: "MALFORMED",
     };
   }
@@ -581,7 +709,7 @@ export function validateInvestmentInput(params: {
     return {
       isValid: false,
       rawAmount,
-      normalizedAmount: normalized,
+      normalizedAmount: canonicalDigits,
       amountBigInt,
       allocationTokens: null,
       errorMessage: `Amount must be a whole multiple of token price (${formatWholeUnits(tokenPrice)} mIDR) to purchase whole tokens.`,
@@ -593,7 +721,7 @@ export function validateInvestmentInput(params: {
     return {
       isValid: false,
       rawAmount,
-      normalizedAmount: normalized,
+      normalizedAmount: canonicalDigits,
       amountBigInt,
       allocationTokens: null,
       errorMessage: `Amount exceeds remaining offering cap (${formatWholeUnits(remainingCap)} mIDR).`,
@@ -605,7 +733,7 @@ export function validateInvestmentInput(params: {
   return {
     isValid: true,
     rawAmount,
-    normalizedAmount: normalized,
+    normalizedAmount: canonicalDigits,
     amountBigInt,
     allocationTokens,
     errorMessage: null,
@@ -655,92 +783,136 @@ export interface PropertyFormValidationResult {
 }
 
 /**
- * Pure client-side validation for CreatePropertyRequest fields.
+ * Pure client-side validation matching the backend createPropertySchema.
+ * Server remains authoritative.
  */
+export type CreatePropertyInput =
+  | Partial<CreatePropertyRequest>
+  | { [K in keyof CreatePropertyRequest]?: unknown }
+  | Record<string, unknown>;
+
 export function validateCreatePropertyRequest(
-  data: Partial<CreatePropertyRequest> | Record<string, unknown>,
+  data: CreatePropertyInput,
 ): PropertyFormValidationResult {
   const errors: PropertyFormValidationErrors = {};
 
-  if (!data.externalId || typeof data.externalId !== "string" || !data.externalId.trim()) {
+  // externalId: string, trim, min 3, max 64, regex /^[A-Za-z0-9][A-Za-z0-9._-]*$/
+  if (!data.externalId || typeof data.externalId !== "string") {
     errors.externalId = "Asset ID / external identifier is required.";
-  }
-
-  if (!data.name || typeof data.name !== "string" || !data.name.trim()) {
-    errors.name = "Property name is required.";
-  }
-
-  if (!data.location || typeof data.location !== "string" || !data.location.trim()) {
-    errors.location = "Location is required.";
-  }
-
-  if (!data.propertyType || typeof data.propertyType !== "string" || !data.propertyType.trim()) {
-    errors.propertyType = "Property type is required.";
-  }
-
-  if (!data.issuerName || typeof data.issuerName !== "string" || !data.issuerName.trim()) {
-    errors.issuerName = "Issuer name is required.";
-  }
-
-  if (!data.description || typeof data.description !== "string" || !data.description.trim()) {
-    errors.description = "Property description is required.";
-  }
-
-  // Indicative value
-  const indicativeRaw = typeof data.indicativeValue === "string" ? data.indicativeValue.trim() : "";
-  const indicativeNorm = normalizeDecimalString(indicativeRaw);
-  if (!indicativeNorm || !isCanonicalUnsignedDecimal(indicativeNorm) || BigInt(indicativeNorm) === 0n) {
-    errors.indicativeValue = "Indicative value must be a positive canonical unsigned integer string.";
-  }
-
-  // Offering target
-  const targetRaw = typeof data.offeringTarget === "string" ? data.offeringTarget.trim() : "";
-  const targetNorm = normalizeDecimalString(targetRaw);
-  if (!targetNorm || !isCanonicalUnsignedDecimal(targetNorm) || BigInt(targetNorm) === 0n) {
-    errors.offeringTarget = "Offering target must be a positive canonical unsigned integer string.";
-  }
-
-  // Token supply
-  const supplyRaw = typeof data.tokenSupply === "string" ? data.tokenSupply.trim() : "";
-  const supplyNorm = normalizeDecimalString(supplyRaw);
-  if (!supplyNorm || !isCanonicalUnsignedDecimal(supplyNorm) || BigInt(supplyNorm) === 0n) {
-    errors.tokenSupply = "Token supply must be a positive canonical unsigned integer string.";
-  }
-
-  // Token price
-  const priceRaw = typeof data.tokenPrice === "string" ? data.tokenPrice.trim() : "";
-  const priceNorm = normalizeDecimalString(priceRaw);
-  if (!priceNorm || !isCanonicalUnsignedDecimal(priceNorm) || BigInt(priceNorm) === 0n) {
-    errors.tokenPrice = "Token price must be a positive canonical unsigned integer string.";
-  }
-
-  // Invariant check: target == supply * price
-  if (
-    targetNorm &&
-    isCanonicalUnsignedDecimal(targetNorm) &&
-    supplyNorm &&
-    isCanonicalUnsignedDecimal(supplyNorm) &&
-    priceNorm &&
-    isCanonicalUnsignedDecimal(priceNorm)
-  ) {
-    const t = BigInt(targetNorm);
-    const s = BigInt(supplyNorm);
-    const p = BigInt(priceNorm);
-    if (s * p !== t) {
-      errors.invariant = `Offering target (${formatWholeUnits(t)} mIDR) must equal token supply × token price (${formatWholeUnits(s)} × ${formatWholeUnits(p)} = ${formatWholeUnits(s * p)} mIDR).`;
+  } else {
+    const trimmed = data.externalId.trim();
+    if (trimmed.length < 3) {
+      errors.externalId = "Asset ID must be at least 3 characters.";
+    } else if (trimmed.length > 64) {
+      errors.externalId = "Asset ID must be at most 64 characters.";
+    } else if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(trimmed)) {
+      errors.externalId =
+        "Asset ID may contain letters, digits, dot, underscore, dash and must start with an alphanumeric character.";
     }
   }
 
-  // Economic rights BPS
-  const bps =
-    typeof data.economicRightsBps === "number"
-      ? data.economicRightsBps
-      : typeof data.economicRightsBps === "string"
-        ? Number(data.economicRightsBps)
-        : NaN;
+  // name: string, trim, min 2, max 160
+  if (!data.name || typeof data.name !== "string") {
+    errors.name = "Property name is required.";
+  } else {
+    const trimmed = data.name.trim();
+    if (trimmed.length < 2) {
+      errors.name = "Property name must be at least 2 characters.";
+    } else if (trimmed.length > 160) {
+      errors.name = "Property name must be at most 160 characters.";
+    }
+  }
 
-  if (Number.isNaN(bps) || !Number.isInteger(bps) || bps <= 0 || bps > 10_000) {
-    errors.economicRightsBps = "Economic rights must be an integer between 1 and 10,000 basis points (1–100%).";
+  // location: string, trim, min 2, max 160
+  if (!data.location || typeof data.location !== "string") {
+    errors.location = "Location is required.";
+  } else {
+    const trimmed = data.location.trim();
+    if (trimmed.length < 2) {
+      errors.location = "Location must be at least 2 characters.";
+    } else if (trimmed.length > 160) {
+      errors.location = "Location must be at most 160 characters.";
+    }
+  }
+
+  // propertyType: string, trim, min 2, max 64
+  if (!data.propertyType || typeof data.propertyType !== "string") {
+    errors.propertyType = "Property type is required.";
+  } else {
+    const trimmed = data.propertyType.trim();
+    if (trimmed.length < 2) {
+      errors.propertyType = "Property type must be at least 2 characters.";
+    } else if (trimmed.length > 64) {
+      errors.propertyType = "Property type must be at most 64 characters.";
+    }
+  }
+
+  // issuerName: string, trim, min 2, max 160
+  if (!data.issuerName || typeof data.issuerName !== "string") {
+    errors.issuerName = "Issuer name is required.";
+  } else {
+    const trimmed = data.issuerName.trim();
+    if (trimmed.length < 2) {
+      errors.issuerName = "Issuer name must be at least 2 characters.";
+    } else if (trimmed.length > 160) {
+      errors.issuerName = "Issuer name must be at most 160 characters.";
+    }
+  }
+
+  // description: string, trim, min 1, max 4000
+  if (!data.description || typeof data.description !== "string") {
+    errors.description = "Property description is required.";
+  } else {
+    const trimmed = data.description.trim();
+    if (trimmed.length < 1) {
+      errors.description = "Property description is required.";
+    } else if (trimmed.length > 4000) {
+      errors.description = "Property description must be at most 4,000 characters.";
+    }
+  }
+
+  // Exact raw numeric strings — no stripping or deleting separators
+  const indicativeRaw = typeof data.indicativeValue === "string" ? data.indicativeValue : "";
+  const parsedIndicative = parseCanonicalUnsignedDecimal(indicativeRaw);
+  if (parsedIndicative === null) {
+    errors.indicativeValue =
+      "Indicative value must be a canonical unsigned base-10 integer string fitting uint256.";
+  } else if (parsedIndicative === 0n) {
+    errors.indicativeValue = "Indicative value must be greater than zero.";
+  }
+
+  const targetRaw = typeof data.offeringTarget === "string" ? data.offeringTarget : "";
+  const parsedTarget = parseCanonicalUnsignedDecimal(targetRaw);
+  if (parsedTarget === null) {
+    errors.offeringTarget =
+      "Offering target must be a canonical unsigned base-10 integer string fitting uint256.";
+  } else if (parsedTarget === 0n) {
+    errors.offeringTarget = "Offering target must be greater than zero.";
+  }
+
+  const supplyRaw = typeof data.tokenSupply === "string" ? data.tokenSupply : "";
+  const parsedSupply = parseCanonicalUnsignedDecimal(supplyRaw);
+  if (parsedSupply === null || parsedSupply === 0n) {
+    errors.tokenSupply =
+      "Token supply must be a positive canonical unsigned base-10 integer string fitting uint256.";
+  }
+
+  const priceRaw = typeof data.tokenPrice === "string" ? data.tokenPrice : "";
+  const parsedPrice = parseCanonicalUnsignedDecimal(priceRaw);
+  if (parsedPrice === null || parsedPrice === 0n) {
+    errors.tokenPrice =
+      "Token price must be a positive canonical unsigned base-10 integer string fitting uint256.";
+  }
+
+  if (parsedSupply !== null && parsedPrice !== null && parsedTarget !== null) {
+    if (parsedSupply * parsedPrice !== parsedTarget) {
+      errors.invariant = `Offering target (${formatWholeUnits(parsedTarget)} mIDR) must equal token supply × token price (${formatWholeUnits(parsedSupply)} × ${formatWholeUnits(parsedPrice)} = ${formatWholeUnits(parsedSupply * parsedPrice)} mIDR) exactly.`;
+    }
+  }
+
+  const bpsResult = validateEconomicRightsBps(data.economicRightsBps);
+  if (!bpsResult.isValid) {
+    errors.economicRightsBps = bpsResult.error!;
   }
 
   return {
@@ -748,4 +920,3 @@ export function validateCreatePropertyRequest(
     errors,
   };
 }
-

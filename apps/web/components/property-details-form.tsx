@@ -1,17 +1,44 @@
 "use client";
 
 import { useState } from "react";
-import type { CreatePropertyRequest } from "@archprop/shared";
 import { ActionButton } from "@/components/transaction-lifecycle";
 import { LegalTitleDisclaimer } from "@/components/demo-disclosure";
 import {
   CANONICAL_VILLA_NUSA_PRESET,
   formatBps,
   formatWholeUnits,
-  isCanonicalUnsignedDecimal,
-  normalizeDecimalString,
+  parseCanonicalUnsignedDecimal,
   validateCreatePropertyRequest,
+  validateEconomicRightsBps,
 } from "@/lib/client/view-models";
+
+export type PropertyFormState = {
+  externalId: string;
+  name: string;
+  location: string;
+  propertyType: string;
+  issuerName: string;
+  indicativeValue: string;
+  offeringTarget: string;
+  tokenSupply: string;
+  tokenPrice: string;
+  economicRightsBps: string;
+  description: string;
+};
+
+const INITIAL_FORM_STATE: PropertyFormState = {
+  externalId: CANONICAL_VILLA_NUSA_PRESET.externalId,
+  name: CANONICAL_VILLA_NUSA_PRESET.name,
+  location: CANONICAL_VILLA_NUSA_PRESET.location,
+  propertyType: CANONICAL_VILLA_NUSA_PRESET.propertyType,
+  issuerName: CANONICAL_VILLA_NUSA_PRESET.issuerName,
+  indicativeValue: CANONICAL_VILLA_NUSA_PRESET.indicativeValue,
+  offeringTarget: CANONICAL_VILLA_NUSA_PRESET.offeringTarget,
+  tokenSupply: CANONICAL_VILLA_NUSA_PRESET.tokenSupply,
+  tokenPrice: CANONICAL_VILLA_NUSA_PRESET.tokenPrice,
+  economicRightsBps: CANONICAL_VILLA_NUSA_PRESET.economicRightsBps.toString(),
+  description: CANONICAL_VILLA_NUSA_PRESET.description,
+};
 
 /**
  * Step 1 of the owner listing wizard.
@@ -24,16 +51,22 @@ import {
  * while keeping the submit action disabled until a real owner wallet and chain adapter exist.
  */
 
-export function PropertyDetailsForm() {
-  const [formState, setFormState] = useState<CreatePropertyRequest>(
-    CANONICAL_VILLA_NUSA_PRESET,
-  );
+export interface PropertyDetailsFormProps {
+  initialValues?: Partial<PropertyFormState>;
+}
+
+export function PropertyDetailsForm({ initialValues }: PropertyDetailsFormProps = {}) {
+  const [formState, setFormState] = useState<PropertyFormState>(() => ({
+    ...INITIAL_FORM_STATE,
+    ...initialValues,
+  }));
 
   const validation = validateCreatePropertyRequest(formState);
+  const bpsResult = validateEconomicRightsBps(formState.economicRightsBps);
 
   const updateField = (
-    field: keyof CreatePropertyRequest,
-    value: string | number,
+    field: keyof PropertyFormState,
+    value: string,
   ) => {
     setFormState((prev) => ({
       ...prev,
@@ -42,30 +75,27 @@ export function PropertyDetailsForm() {
   };
 
   const handleResetToPreset = () => {
-    setFormState(CANONICAL_VILLA_NUSA_PRESET);
+    setFormState(INITIAL_FORM_STATE);
   };
 
-  // Invariant calculation preview
-  const supplyNorm = normalizeDecimalString(formState.tokenSupply ?? "");
-  const priceNorm = normalizeDecimalString(formState.tokenPrice ?? "");
-  const targetNorm = normalizeDecimalString(formState.offeringTarget ?? "");
+  // Exact raw numeric strings — no stripping or deleting separators
+  const parsedSupply = parseCanonicalUnsignedDecimal(formState.tokenSupply);
+  const parsedPrice = parseCanonicalUnsignedDecimal(formState.tokenPrice);
+  const parsedTarget = parseCanonicalUnsignedDecimal(formState.offeringTarget);
 
-  const hasValidSupply =
-    isCanonicalUnsignedDecimal(supplyNorm) && BigInt(supplyNorm) > 0n;
-  const hasValidPrice =
-    isCanonicalUnsignedDecimal(priceNorm) && BigInt(priceNorm) > 0n;
-  const hasValidTarget =
-    isCanonicalUnsignedDecimal(targetNorm) && BigInt(targetNorm) > 0n;
+  const hasValidSupply = parsedSupply !== null && parsedSupply > 0n;
+  const hasValidPrice = parsedPrice !== null && parsedPrice > 0n;
+  const hasValidTarget = parsedTarget !== null && parsedTarget > 0n;
 
   const calculatedTarget =
     hasValidSupply && hasValidPrice
-      ? BigInt(supplyNorm) * BigInt(priceNorm)
+      ? parsedSupply * parsedPrice
       : null;
 
   const matchesInvariant =
     calculatedTarget !== null &&
     hasValidTarget &&
-    BigInt(targetNorm) === calculatedTarget;
+    parsedTarget === calculatedTarget;
 
   const missingPrerequisite = !validation.isValid
     ? "valid property parameters matching required invariants"
@@ -292,23 +322,24 @@ export function PropertyDetailsForm() {
               name="economicRightsBps"
               type="text"
               inputMode="numeric"
-              value={formState.economicRightsBps.toString()}
-              onChange={(e) => {
-                const parsed = Number.parseInt(e.target.value, 10);
-                updateField("economicRightsBps", Number.isNaN(parsed) ? (e.target.value as unknown as number) : parsed);
-              }}
+              value={formState.economicRightsBps}
+              onChange={(e) => updateField("economicRightsBps", e.target.value)}
               placeholder="3000"
               aria-invalid={!!validation.errors.economicRightsBps}
-              aria-describedby="economicRightsBps-hint"
+              aria-describedby={
+                validation.errors.economicRightsBps
+                  ? "economicRightsBps-error"
+                  : "economicRightsBps-hint"
+              }
               className="ap-tabular rounded-lg border border-line-strong bg-surface px-3 py-2.5 text-sm text-ink placeholder:text-ink-subtle"
             />
             <p id="economicRightsBps-hint" className="text-xs text-ink-subtle">
-              {Number.isInteger(Number(formState.economicRightsBps)) && Number(formState.economicRightsBps) >= 0
-                ? `${formatBps(Number(formState.economicRightsBps))} participation`
-                : "Basis points (100 bps = 1%)"}
+              {bpsResult.isValid && bpsResult.bps !== null
+                ? `${formatBps(bpsResult.bps)} participation`
+                : "Basis points (100 bps = 1%, range 1–10,000)"}
             </p>
             {validation.errors.economicRightsBps ? (
-              <p role="alert" className="text-xs text-critical">
+              <p id="economicRightsBps-error" role="alert" className="text-xs text-critical">
                 {validation.errors.economicRightsBps}
               </p>
             ) : null}
@@ -375,17 +406,17 @@ export function PropertyDetailsForm() {
             <span>{matchesInvariant ? "✓ Invariant Satisfied:" : "⚠ Invariant Check:"}</span>
             <span>Target == Supply × Price</span>
           </div>
-          {calculatedTarget !== null ? (
+          {calculatedTarget !== null && parsedSupply !== null && parsedPrice !== null ? (
             <p className="mt-1 ap-tabular">
-              Supply ({formatWholeUnits(BigInt(supplyNorm))}) × Price ({formatWholeUnits(BigInt(priceNorm))} mIDR) ={" "}
+              Supply ({formatWholeUnits(parsedSupply)}) × Price ({formatWholeUnits(parsedPrice)} mIDR) ={" "}
               {formatWholeUnits(calculatedTarget)} mIDR
               {matchesInvariant ? (
                 <span className="ml-1 text-verified">
-                  (matches offering target {formatWholeUnits(BigInt(targetNorm))} mIDR exactly)
+                  (matches offering target {formatWholeUnits(parsedTarget!)} mIDR exactly)
                 </span>
               ) : hasValidTarget ? (
-                <span className="ml-1 text-critical font-medium">
-                  (does not match offering target {formatWholeUnits(BigInt(targetNorm))} mIDR)
+                <span className="ml-1 font-medium text-critical">
+                  (does not match offering target {formatWholeUnits(parsedTarget!)} mIDR)
                 </span>
               ) : null}
             </p>

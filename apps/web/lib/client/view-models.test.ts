@@ -23,12 +23,13 @@ import {
   isCanonicalUnsignedDecimal,
   isInvestmentAmountDivisible,
   isPositiveSupplyAndPrice,
-  normalizeDecimalString,
   parseCanonicalUnsignedDecimal,
   truncateHash,
   validateCreatePropertyRequest,
+  validateEconomicRightsBps,
   validateInvestmentInput,
   validateTargetSupplyPriceInvariant,
+  UINT256_MAX,
   type ChainDataState,
   type PropertyCardView,
 } from "@/lib/client/view-models";
@@ -353,17 +354,19 @@ describe("formatting helpers", () => {
   });
 });
 
-describe("normalizeDecimalString", () => {
-  it("strips commas, spaces, thin spaces, and underscores", () => {
-    expect(normalizeDecimalString("10,000,000,000")).toBe("10000000000");
-    expect(normalizeDecimalString("300 000")).toBe("300000");
-    expect(normalizeDecimalString(" 3 000 000 000 ")).toBe("3000000000");
-    expect(normalizeDecimalString("10_000")).toBe("10000");
+describe("UINT256_MAX and uint256 bounds", () => {
+  it("matches (1n << 256n) - 1n exactly", () => {
+    expect(UINT256_MAX).toBe((1n << 256n) - 1n);
   });
 
-  it("leaves clean canonical digit strings intact", () => {
-    expect(normalizeDecimalString("10000000000")).toBe("10000000000");
-    expect(normalizeDecimalString("0")).toBe("0");
+  it("accepts UINT256_MAX and rejects UINT256_MAX + 1n", () => {
+    const maxStr = UINT256_MAX.toString();
+    const overflowStr = (UINT256_MAX + 1n).toString();
+    expect(isCanonicalUnsignedDecimal(maxStr)).toBe(true);
+    expect(parseCanonicalUnsignedDecimal(maxStr)).toBe(UINT256_MAX);
+
+    expect(isCanonicalUnsignedDecimal(overflowStr)).toBe(false);
+    expect(parseCanonicalUnsignedDecimal(overflowStr)).toBeNull();
   });
 });
 
@@ -375,6 +378,14 @@ describe("isCanonicalUnsignedDecimal", () => {
     expect(isCanonicalUnsignedDecimal("300000")).toBe(true);
     expect(isCanonicalUnsignedDecimal("3000000000")).toBe(true);
     expect(isCanonicalUnsignedDecimal("10000000000")).toBe(true);
+    expect(isCanonicalUnsignedDecimal(UINT256_MAX.toString())).toBe(true);
+  });
+
+  it("rejects malformed numeric request values: empty, alpha, leading space, hex, sign, comma, underscore", () => {
+    const malformed = ["", "abc", " 10", "0x10", "+1", "1,000", "10_000"];
+    for (const val of malformed) {
+      expect(isCanonicalUnsignedDecimal(val), `expected ${JSON.stringify(val)} to be rejected`).toBe(false);
+    }
   });
 
   it("rejects leading zeros on multi-digit numbers", () => {
@@ -404,6 +415,11 @@ describe("isCanonicalUnsignedDecimal", () => {
     expect(isCanonicalUnsignedDecimal("")).toBe(false);
     expect(isCanonicalUnsignedDecimal("   ")).toBe(false);
   });
+
+  it("rejects values exceeding uint256", () => {
+    const overflow = (1n << 256n).toString();
+    expect(isCanonicalUnsignedDecimal(overflow)).toBe(false);
+  });
 });
 
 describe("parseCanonicalUnsignedDecimal", () => {
@@ -411,23 +427,70 @@ describe("parseCanonicalUnsignedDecimal", () => {
     expect(parseCanonicalUnsignedDecimal("0")).toBe(0n);
     expect(parseCanonicalUnsignedDecimal("10000")).toBe(10000n);
     expect(parseCanonicalUnsignedDecimal("10000000000")).toBe(10_000_000_000n);
+    expect(parseCanonicalUnsignedDecimal(UINT256_MAX.toString())).toBe(UINT256_MAX);
   });
 
-  it("returns null for non-canonical strings", () => {
-    expect(parseCanonicalUnsignedDecimal("")).toBeNull();
+  it("returns null for malformed numeric request values", () => {
+    const malformed = ["", "abc", " 10", "0x10", "+1", "1,000", "10_000"];
+    for (const val of malformed) {
+      expect(parseCanonicalUnsignedDecimal(val), `expected null for ${JSON.stringify(val)}`).toBeNull();
+    }
+  });
+
+  it("returns null for non-canonical strings and uint256 overflow", () => {
     expect(parseCanonicalUnsignedDecimal("01")).toBeNull();
     expect(parseCanonicalUnsignedDecimal("-5")).toBeNull();
     expect(parseCanonicalUnsignedDecimal("1.5")).toBeNull();
-    expect(parseCanonicalUnsignedDecimal("abc")).toBeNull();
+    expect(parseCanonicalUnsignedDecimal((UINT256_MAX + 1n).toString())).toBeNull();
+  });
+});
+
+describe("validateEconomicRightsBps", () => {
+  it("accepts valid integers in 1..10000 as number or canonical string", () => {
+    expect(validateEconomicRightsBps(3000)).toEqual({ isValid: true, bps: 3000, error: null });
+    expect(validateEconomicRightsBps("3000")).toEqual({ isValid: true, bps: 3000, error: null });
+    expect(validateEconomicRightsBps(1)).toEqual({ isValid: true, bps: 1, error: null });
+    expect(validateEconomicRightsBps("1")).toEqual({ isValid: true, bps: 1, error: null });
+    expect(validateEconomicRightsBps(10000)).toEqual({ isValid: true, bps: 10000, error: null });
+    expect(validateEconomicRightsBps("10000")).toEqual({ isValid: true, bps: 10000, error: null });
+  });
+
+  it("rejects partial parsing strings without using parseInt", () => {
+    const malformed = ["3000abc", "abc3000", "3.5", "3,000", " 3000 ", "+3000", "-3000"];
+    for (const val of malformed) {
+      const res = validateEconomicRightsBps(val);
+      expect(res.isValid, `expected ${val} to be invalid`).toBe(false);
+      expect(res.bps).toBeNull();
+      expect(res.error).toBeTruthy();
+    }
+  });
+
+  it("rejects empty, null, and undefined values", () => {
+    expect(validateEconomicRightsBps("").isValid).toBe(false);
+    expect(validateEconomicRightsBps(null).isValid).toBe(false);
+    expect(validateEconomicRightsBps(undefined).isValid).toBe(false);
+  });
+
+  it("rejects zero and out-of-range values", () => {
+    expect(validateEconomicRightsBps(0).isValid).toBe(false);
+    expect(validateEconomicRightsBps("0").isValid).toBe(false);
+    expect(validateEconomicRightsBps(-1).isValid).toBe(false);
+    expect(validateEconomicRightsBps(10001).isValid).toBe(false);
+    expect(validateEconomicRightsBps("10001").isValid).toBe(false);
   });
 });
 
 describe("isPositiveSupplyAndPrice", () => {
-  it("accepts strictly positive supply and price", () => {
+  it("accepts strictly positive supply and price as bigint, number, or canonical string", () => {
     expect(isPositiveSupplyAndPrice(300_000n, 10_000n)).toBe(true);
     expect(isPositiveSupplyAndPrice("300000", "10000")).toBe(true);
-    expect(isPositiveSupplyAndPrice("300,000", "10,000")).toBe(true);
     expect(isPositiveSupplyAndPrice(300000, 10000)).toBe(true);
+  });
+
+  it("rejects non-canonical string inputs (commas, spaces, letters)", () => {
+    expect(isPositiveSupplyAndPrice("300,000", "10,000")).toBe(false);
+    expect(isPositiveSupplyAndPrice(" 300000", "10000")).toBe(false);
+    expect(isPositiveSupplyAndPrice("300000", "10_000")).toBe(false);
   });
 
   it("rejects zero or negative supply", () => {
@@ -442,9 +505,10 @@ describe("isPositiveSupplyAndPrice", () => {
     expect(isPositiveSupplyAndPrice(300_000n, -100n)).toBe(false);
   });
 
-  it("rejects malformed inputs", () => {
+  it("rejects malformed inputs and uint256 overflow", () => {
     expect(isPositiveSupplyAndPrice("abc", "10000")).toBe(false);
     expect(isPositiveSupplyAndPrice("300000", "xyz")).toBe(false);
+    expect(isPositiveSupplyAndPrice((UINT256_MAX + 1n).toString(), "10000")).toBe(false);
   });
 });
 
@@ -456,9 +520,15 @@ describe("validateTargetSupplyPriceInvariant", () => {
     expect(
       validateTargetSupplyPriceInvariant("3000000000", "300000", "10000"),
     ).toBe(true);
+  });
+
+  it("rejects non-canonical request strings with separators", () => {
     expect(
       validateTargetSupplyPriceInvariant("3,000,000,000", "300,000", "10,000"),
-    ).toBe(true);
+    ).toBe(false);
+    expect(
+      validateTargetSupplyPriceInvariant(" 3000000000", "300000", "10000"),
+    ).toBe(false);
   });
 
   it("fails when target != supply * price", () => {
@@ -474,6 +544,11 @@ describe("validateTargetSupplyPriceInvariant", () => {
     expect(validateTargetSupplyPriceInvariant(0n, 0n, 0n)).toBe(false);
     expect(validateTargetSupplyPriceInvariant(3_000_000_000n, 0n, 10_000n)).toBe(false);
     expect(validateTargetSupplyPriceInvariant(-3_000_000_000n, 300_000n, -10_000n)).toBe(false);
+  });
+
+  it("rejects uint256 overflow", () => {
+    const overflow = (UINT256_MAX + 1n).toString();
+    expect(validateTargetSupplyPriceInvariant(overflow, "300000", "10000")).toBe(false);
   });
 });
 
@@ -679,19 +754,73 @@ describe("CANONICAL_VILLA_NUSA_PRESET and CreatePropertyRequest validation", () 
     expect(validation.errors.description).toBeTruthy();
   });
 
-  it("detects non-canonical numeric inputs", () => {
-    const validation = validateCreatePropertyRequest({
-      ...CANONICAL_VILLA_NUSA_PRESET,
-      indicativeValue: "0",
-      offeringTarget: "-3000000000",
-      tokenSupply: "300.5",
-      tokenPrice: "abc",
-    });
-    expect(validation.isValid).toBe(false);
-    expect(validation.errors.indicativeValue).toBeTruthy();
-    expect(validation.errors.offeringTarget).toBeTruthy();
-    expect(validation.errors.tokenSupply).toBeTruthy();
-    expect(validation.errors.tokenPrice).toBeTruthy();
+  it("detects malformed numeric request values for all 4 numeric fields", () => {
+    const malformedCases = ["", "abc", " 10", "0x10", "+1", "1,000", "10_000", (UINT256_MAX + 1n).toString()];
+
+    for (const val of malformedCases) {
+      const resIndicative = validateCreatePropertyRequest({
+        ...CANONICAL_VILLA_NUSA_PRESET,
+        indicativeValue: val,
+      });
+      expect(resIndicative.isValid, `indicativeValue ${JSON.stringify(val)} should be invalid`).toBe(false);
+      expect(resIndicative.errors.indicativeValue).toBeTruthy();
+
+      const resTarget = validateCreatePropertyRequest({
+        ...CANONICAL_VILLA_NUSA_PRESET,
+        offeringTarget: val,
+      });
+      expect(resTarget.isValid, `offeringTarget ${JSON.stringify(val)} should be invalid`).toBe(false);
+      expect(resTarget.errors.offeringTarget).toBeTruthy();
+
+      const resSupply = validateCreatePropertyRequest({
+        ...CANONICAL_VILLA_NUSA_PRESET,
+        tokenSupply: val,
+      });
+      expect(resSupply.isValid, `tokenSupply ${JSON.stringify(val)} should be invalid`).toBe(false);
+      expect(resSupply.errors.tokenSupply).toBeTruthy();
+
+      const resPrice = validateCreatePropertyRequest({
+        ...CANONICAL_VILLA_NUSA_PRESET,
+        tokenPrice: val,
+      });
+      expect(resPrice.isValid, `tokenPrice ${JSON.stringify(val)} should be invalid`).toBe(false);
+      expect(resPrice.errors.tokenPrice).toBeTruthy();
+    }
+  });
+
+  it("enforces backend text schema constraints for externalId", () => {
+    // Length < 3
+    expect(validateCreatePropertyRequest({ ...CANONICAL_VILLA_NUSA_PRESET, externalId: "AB" }).isValid).toBe(false);
+    // Length > 64
+    expect(validateCreatePropertyRequest({ ...CANONICAL_VILLA_NUSA_PRESET, externalId: "A".repeat(65) }).isValid).toBe(false);
+    // Invalid characters: starts with non-alphanumeric or contains spaces/symbols
+    expect(validateCreatePropertyRequest({ ...CANONICAL_VILLA_NUSA_PRESET, externalId: "-ARCH001" }).isValid).toBe(false);
+    expect(validateCreatePropertyRequest({ ...CANONICAL_VILLA_NUSA_PRESET, externalId: "ARCH 001" }).isValid).toBe(false);
+    expect(validateCreatePropertyRequest({ ...CANONICAL_VILLA_NUSA_PRESET, externalId: "ARCH@001" }).isValid).toBe(false);
+    // Valid characters
+    expect(validateCreatePropertyRequest({ ...CANONICAL_VILLA_NUSA_PRESET, externalId: "ARCH_PROP.01-v2" }).isValid).toBe(true);
+  });
+
+  it("enforces backend text schema constraints for name, location, propertyType, issuerName, description", () => {
+    // name: 2..160
+    expect(validateCreatePropertyRequest({ ...CANONICAL_VILLA_NUSA_PRESET, name: "A" }).isValid).toBe(false);
+    expect(validateCreatePropertyRequest({ ...CANONICAL_VILLA_NUSA_PRESET, name: "A".repeat(161) }).isValid).toBe(false);
+
+    // location: 2..160
+    expect(validateCreatePropertyRequest({ ...CANONICAL_VILLA_NUSA_PRESET, location: "B" }).isValid).toBe(false);
+    expect(validateCreatePropertyRequest({ ...CANONICAL_VILLA_NUSA_PRESET, location: "B".repeat(161) }).isValid).toBe(false);
+
+    // propertyType: 2..64
+    expect(validateCreatePropertyRequest({ ...CANONICAL_VILLA_NUSA_PRESET, propertyType: "C" }).isValid).toBe(false);
+    expect(validateCreatePropertyRequest({ ...CANONICAL_VILLA_NUSA_PRESET, propertyType: "C".repeat(65) }).isValid).toBe(false);
+
+    // issuerName: 2..160
+    expect(validateCreatePropertyRequest({ ...CANONICAL_VILLA_NUSA_PRESET, issuerName: "D" }).isValid).toBe(false);
+    expect(validateCreatePropertyRequest({ ...CANONICAL_VILLA_NUSA_PRESET, issuerName: "D".repeat(161) }).isValid).toBe(false);
+
+    // description: 1..4000
+    expect(validateCreatePropertyRequest({ ...CANONICAL_VILLA_NUSA_PRESET, description: "" }).isValid).toBe(false);
+    expect(validateCreatePropertyRequest({ ...CANONICAL_VILLA_NUSA_PRESET, description: "E".repeat(4001) }).isValid).toBe(false);
   });
 
   it("detects target != supply * price invariant violations", () => {
@@ -704,20 +833,21 @@ describe("CANONICAL_VILLA_NUSA_PRESET and CreatePropertyRequest validation", () 
     expect(validation.errors.invariant).toContain("must equal token supply × token price");
   });
 
-  it("detects invalid economic rights basis points", () => {
-    const tooHigh = validateCreatePropertyRequest({
-      ...CANONICAL_VILLA_NUSA_PRESET,
-      economicRightsBps: 15_000,
-    });
-    expect(tooHigh.isValid).toBe(false);
-    expect(tooHigh.errors.economicRightsBps).toBeTruthy();
+  it("detects invalid economic rights basis points including partial parsing strings", () => {
+    const malformedBps = ["3000abc", "abc3000", "3.5", "", "0", "-1", "10001", 0, 10001, -5];
+    for (const bps of malformedBps) {
+      const res = validateCreatePropertyRequest({
+        ...CANONICAL_VILLA_NUSA_PRESET,
+        economicRightsBps: bps as unknown as number,
+      });
+      expect(res.isValid, `economicRightsBps ${JSON.stringify(bps)} should be invalid`).toBe(false);
+      expect(res.errors.economicRightsBps).toBeTruthy();
+    }
 
-    const zero = validateCreatePropertyRequest({
+    const validStringBps = validateCreatePropertyRequest({
       ...CANONICAL_VILLA_NUSA_PRESET,
-      economicRightsBps: 0,
+      economicRightsBps: "3000" as unknown as number,
     });
-    expect(zero.isValid).toBe(false);
-    expect(zero.errors.economicRightsBps).toBeTruthy();
+    expect(validStringBps.isValid).toBe(true);
   });
 });
-
