@@ -207,6 +207,7 @@ export function getDeploymentPath(customPath?: string): string {
  */
 export function checkArtifactsPrerequisite(customDir?: string): ArtifactCheck {
   const artifactsDir = resolveArtifactsDir(customDir);
+  const isExplicit = Boolean(customDir?.trim() || process.env.ARCHPROP_ARTIFACTS_DIR?.trim());
   const missingArtifacts: string[] = [];
 
   if (!existsSync(artifactsDir)) {
@@ -215,7 +216,9 @@ export function checkArtifactsPrerequisite(customDir?: string): ArtifactCheck {
       artifactsDir,
       missingArtifacts: [...REQUIRED_CONTRACTS],
       diagnostic:
-        `Foundry artifacts directory not found at "${artifactsDir}". ` +
+        (isExplicit
+          ? `Explicit Foundry artifacts directory not found at "${artifactsDir}". `
+          : `Foundry artifacts directory not found at "${artifactsDir}". `) +
         `SC-001 contracts are not available or have not been compiled in this worktree. ` +
         `Golden path execution is blocked until SC-001 is merged and built.`,
     };
